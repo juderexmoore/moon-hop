@@ -83,6 +83,7 @@ const CREDITS = [
   { round: 17, who: "Mommy", what: "Side quests! Gold portals open side-scrolling levels in 10 worlds, starting in a 1700s Scottish castle. Beat each boss to free a caged pet (first up: Molly, a black dachshund + chihuahua), then bring one pet on your climb for its special power. Plus the PETS menu, starring Beatrice." },
   { round: 18, who: "G.", what: "Play as a Boston terrier! A new BODY choice in the character maker, with a space vest, bubble helmet and tiny jetpack, plus a ready-made terrier named BOSTON." },
   { round: 19, who: "G.", what: "OG Astro, a mini version of the very first Moon Hop astronaut, is a free pet for everyone. Its BACKUP JETPACK gives you an extra mid-air jump every 12 seconds." },
+  { round: 20, who: "G.", what: "Put your whole name on the leaderboard (up to 10 letters) instead of just 3 initials." },
 ];
 
 // ---------- Tuning ----------
@@ -814,7 +815,9 @@ let passedRecord = false, recordFlash = 0;
 let result = null;              // { moon, height, time }
 let overPhase = "board";        // "initials" or "board"
 let overTimer = 0;
-let entry = null;               // { letters: ["A","A","A"], pos: 0 }
+let entry = null;               // { name: "GREY" } - your name for the leaderboard (Round 20: whole names, not initials)
+const NAME_MAX = 10;
+const cleanName = s => String(s || "").toUpperCase().replace(/[^A-Z0-9 ]/g, "").replace(/\s+/g, " ").slice(0, NAME_MAX);
 let highlightIndex = -1;
 const particles = [];
 const petals = [];
@@ -1219,15 +1222,14 @@ function endRun(moon, forReal = false) {
   highlightIndex = -1;
   if (qualifies(result)) {
     overPhase = "initials";
-    const fromName = (currentChar().name.toUpperCase().replace(/[^A-Z]/g, "") + "AAA").slice(0, 3);
-    entry = { letters: fromName.split(""), pos: 0 };          // starts as your character's name
+    entry = { name: cleanName(currentChar().name).trim() };   // starts as your character's name
   } else {
     overPhase = "board";
   }
 }
 
 function saveEntry() {
-  const rec = { initials: entry.letters.join(""), height: result.height, moon: result.moon, time: result.time, v: 16 };
+  const rec = { initials: cleanName(entry.name).trim() || "???", height: result.height, moon: result.moon, time: result.time, v: 16 };
   if (arcade) rec.arcade = true;
   scores.push(rec);
   scores = cleanScores(scores);
@@ -1332,15 +1334,10 @@ function handleOverKey(e) {
     return;
   }
   if (overPhase === "initials") {
-    const L = entry.letters;
-    if (c === "ArrowUp") L[entry.pos] = shiftLetter(L[entry.pos], 1);
-    else if (c === "ArrowDown") L[entry.pos] = shiftLetter(L[entry.pos], -1);
-    else if (c === "ArrowLeft" || c === "Backspace") entry.pos = Math.max(0, entry.pos - 1);
-    else if (c === "ArrowRight") entry.pos = Math.min(2, entry.pos + 1);
-    else if (c === "Enter") { if (entry.pos < 2) entry.pos++; else saveEntry(); }
-    else if (/^[a-z]$/i.test(e.key)) {
-      L[entry.pos] = e.key.toUpperCase();
-      if (entry.pos < 2) entry.pos++;
+    if (c === "Backspace") entry.name = entry.name.slice(0, -1);
+    else if (c === "Enter") { if (entry.name.trim()) saveEntry(); }
+    else if (e.key && /^[a-z0-9 ]$/i.test(e.key) && entry.name.length < NAME_MAX && !(e.key === " " && (!entry.name || entry.name.endsWith(" ")))) {
+      entry.name += e.key.toUpperCase();
     }
   } else {
     if (c === "Space" || c === "Enter") restartRun();
@@ -4516,7 +4513,8 @@ function drawHUD() {
   const hi = board()[0];
   txt(arcade ? "ARCADE HI" : "HI", VIEW_W - 12, 12, 8, "#ffd447", "right");
   if (arcade) txt("1 LIFE!", VIEW_W - 12, 44, 8, "#ff8a7a", "right");
-  txt(hi ? `${hi.initials} ${hi.moon ? "WIN!" : hi.height + " m"}` : "---", VIEW_W - 12, 26, 12, "#ffffff", "right");
+  const hiText = hi ? `${hi.initials} ${hi.moon ? "WIN!" : hi.height + " m"}` : "---";
+  txt(hiText, VIEW_W - 12, 26, hiText.length > 12 ? 9 : 12, "#ffffff", "right");
 
   // Progress bar: ground at the bottom, Moon at the top
   const bx = VIEW_W - 10, top = 96, bot = 690;
@@ -4588,14 +4586,15 @@ function drawBoard(cx, y, highlight, t, list = board()) {
     const s = list[i];
     const rank = String(i + 1).padStart(2, " ") + ".";
     const right = s ? (s.moon ? "WIN! " + fmtTime(s.time) : (s.height + " m").padStart(9)) : "".padStart(9);
-    const line = `${rank} ${s ? s.initials : "---"}  ${right}`;
+    const name = (s ? String(s.initials).slice(0, NAME_MAX) : "---").padEnd(NAME_MAX);
+    const line = `${rank} ${name} ${right}`;
     const ry = y + i * 20;
     if (i === highlight) {
       ctx.fillStyle = Math.floor(t * 4) % 2 ? "rgba(255,212,71,0.35)" : "rgba(255,212,71,0.18)";
-      rr(cx - 110, ry - 4, 220, 18, 4);
+      rr(cx - 125, ry - 4, 250, 18, 4);
       ctx.fill();
     }
-    txt(line, cx, ry, 10, s ? (colors[i] || "#ffffff") : "rgba(255,255,255,0.35)", "center");
+    txt(line, cx, ry, 9, s ? (colors[i] || "#ffffff") : "rgba(255,255,255,0.35)", "center");
   }
 }
 
@@ -4841,27 +4840,21 @@ function drawOver(t) {
 
   if (overPhase === "initials") {
     txt("NEW HIGH SCORE!", cx, 238, 14, "#9fe39a", "center");
-    txt("ENTER YOUR INITIALS", cx, 272, 10, "#c8d3ff", "center");
-    for (let i = 0; i < 3; i++) {
-      const x = cx - 60 + i * 60;
-      txt(entry.letters[i], x, 314, 32, i === entry.pos ? "#ffd447" : "#ffffff", "center");
-      if (i === entry.pos && Math.floor(t * 3) % 2 === 0) {
-        ctx.fillStyle = "#ffd447";
-        ctx.fillRect(x - 18, 354, 36, 4);
-      }
+    txt("TYPE YOUR NAME", cx, 272, 10, "#c8d3ff", "center");
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    rr(cx - 150, 300, 300, 46, 8); ctx.fill();
+    const cursor = entry.name.length < NAME_MAX && Math.floor(t * 3) % 2 === 0 ? "_" : " ";
+    txt(entry.name + cursor, cx, 312, 22, "#ffd447", "center");
+    txt(`${entry.name.length} / ${NAME_MAX} LETTERS`, cx, 352, 7, "rgba(255,255,255,0.5)", "center");
+    if (USE_BUTTONS()) {                                    // touch screens: the phone's own keyboard pops up
+      uiButton("TYPE MY NAME", cx - 150, 374, 140, 36, () => {
+        if (overTimer > 0) return;
+        const n = window.prompt(`Your name for the leaderboard (up to ${NAME_MAX} letters):`, entry.name);
+        if (n !== null) entry.name = cleanName(n).trim();
+      }, "#ffd447", 9);
+      uiButton("OK", cx + 10, 374, 140, 36, () => { if (overTimer <= 0 && entry.name.trim()) saveEntry(); }, "#7dff7a", 12);
     }
-    if (USE_BUTTONS()) {                                    // tap + or - on a letter, then OK
-      for (let i = 0; i < 3; i++) {
-        const x = cx - 60 + i * 60;
-        const change = step => () => { if (overTimer <= 0) { entry.pos = i; entry.letters[i] = shiftLetter(entry.letters[i], step); } };
-        uiButton("+", x - 22, 280, 44, 28, change(1), "#ffffff", 12);
-        uiButton("-", x - 22, 364, 44, 28, change(-1), "#ffffff", 12);
-      }
-      uiButton("OK", cx - 70, 410, 140, 36, () => { if (overTimer <= 0) saveEntry(); }, "#7dff7a", 12);
-    } else {
-      txt("TYPE LETTERS or USE ARROWS", cx, 404, 8, "#c8d3ff", "center");
-      txt("ENTER = OK", cx, 424, 8, "#c8d3ff", "center");
-    }
+    if (!IS_TOUCH) txt("TYPE IT, BACKSPACE FIXES IT, ENTER = OK", cx, USE_BUTTONS() ? 424 : 380, 8, "#c8d3ff", "center");
   } else {
     txt(arcade ? "ARCADE TOP 10" : "TOP CLIMBERS", cx, 222, 12, arcade ? "#ff8a7a" : "#ffd447", "center");
     drawBoard(cx, 250, highlightIndex, t);
