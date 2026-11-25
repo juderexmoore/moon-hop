@@ -82,6 +82,7 @@ const CREDITS = [
   { round: 16, who: "J.", what: "Earth's mantle under the sea, Jupiter and Saturn, ARCADE mode (1 life, never ends, past Uranus, Neptune and Pluto into the Endless Void), a DAMAGE % meter where knockback grows, spiky obstacles, more enemies, and chunkier pixels." },
   { round: 17, who: "Mommy", what: "Side quests! Gold portals open side-scrolling levels in 10 worlds, starting in a 1700s Scottish castle. Beat each boss to free a caged pet (first up: Molly, a black dachshund + chihuahua), then bring one pet on your climb for its special power. Plus the PETS menu, starring Beatrice." },
   { round: 18, who: "G.", what: "Play as a Boston terrier! A new BODY choice in the character maker, with a space vest, bubble helmet and tiny jetpack, plus a ready-made terrier named BOSTON." },
+  { round: 19, who: "G.", what: "OG Astro, a mini version of the very first Moon Hop astronaut, is a free pet for everyone. Its BACKUP JETPACK gives you an extra mid-air jump every 12 seconds." },
 ];
 
 // ---------- Tuning ----------
@@ -2025,6 +2026,12 @@ function doJump(kind, wallDir = 0) {
   } else if (kind === "air") {
     p.airJumpsLeft--;
     v *= st.airJumpPower;
+    if (petPos.armed) {                                      // OG Astro's backup jetpack was used
+      petPos.armed = false;
+      petPos.cd = 12;
+      floatText(p.x + PLAYER_W / 2, p.y - 6, "JETPACK!", "#8fbaff");
+      puff(p.x + PLAYER_W / 2, p.y, 10, 120, "200,220,255");
+    }
   } else {                                                   // wall kick
     p.wallKicked = true;
     v *= 0.95;
@@ -4621,7 +4628,7 @@ function drawTitle(t) {
     txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
   }
   const pet = activePet();
-  txt(pet ? `PET ON YOUR CLIMB: ${PETS.find(p => p.id === pet).name}` : "FREE PETS IN GOLD SIDE QUEST PORTALS!", cx, 254, 7, "#ff8fd0", "center");
+  txt(pet ? `PET ON YOUR CLIMB: ${petById(pet).name}` : "FREE PETS IN GOLD SIDE QUEST PORTALS!", cx, 254, 7, "#ff8fd0", "center");
   const showArc = board(true).length > 0 && Math.floor(t / 5) % 2 === 1;     // the title takes turns showing both boards
   txt(showArc ? "ARCADE TOP 10" : "TOP CLIMBERS", cx, 266, 12, showArc ? "#ff8a7a" : "#ffd447", "center");
   drawBoard(cx, 292, -1, t, board(showArc));
@@ -6914,6 +6921,11 @@ const PETS = [
     desc: "Every 35 seconds Nova makes you shine like a star: nothing can hurt you for 4 seconds.",
     story: "Robo Overlord wanted Nova's glowing antenna for a power source. She was born on a comet and purrs in three languages." },
 ];
+const OG_PET = { id: "og", name: "OG ASTRO", breed: "THE ORIGINAL ASTRONAUT", power: "BACKUP JETPACK", color: "#8fbaff",
+  desc: "Every 12 seconds OG's old jetpack gives you one extra jump in mid-air. Free from the start!",
+  story: "OG Astro was the very first climber in Moon Hop, back in Round 0, before there were poppies, bosses or biomes. Now OG is mini-sized and loves cheering on new climbers." };
+const OG_LOOK = { name: "OG", suit: 0, visor: 8, pack: 1, hat: 0, hatColor: 3, wings: 9, body: 0 };   // the Round 0 astronaut
+const petById = id => (id === "og" ? OG_PET : PETS.find(p => p.id === id));
 const BEATRICE = { id: "beatrice", name: "BEATRICE", breed: "BOSTON TERRIER WITH WINGS", power: "DOG SPELLS", color: "#c39bff",
   desc: "Always with you. She learns a new spell in each biome: CTRL+B (or SPELL) casts it, V (or NEXT) switches.",
   story: "Beatrice has flown beside you since the very first climb. Her whirly tail spins when she's happy, which is always." };
@@ -6923,13 +6935,13 @@ let petSave = (() => {
     const d = JSON.parse(localStorage.getItem("moonhop.pets.v1"));
     if (d && Array.isArray(d.freed)) {
       const freed = d.freed.filter(id => PETS.some(p => p.id === id));
-      return { freed, chosen: freed.includes(d.chosen) ? d.chosen : null };
+      return { freed, chosen: freed.includes(d.chosen) || d.chosen === "og" ? d.chosen : null };
     }
   } catch (e) { /* new save */ }
   return { freed: [], chosen: null };
 })();
 const savePets = () => { try { localStorage.setItem("moonhop.pets.v1", JSON.stringify(petSave)); } catch (e) { /* just for this visit */ } };
-const petFreed = id => petSave.freed.includes(id);
+const petFreed = id => id === "og" || petSave.freed.includes(id);   // OG Astro is always free
 const activePet = () => (mode === "main" && petSave.chosen && petFreed(petSave.chosen) ? petSave.chosen : null);
 const nextQuestIndex = () => { const i = PETS.findIndex(p => !petFreed(p.id)); return i >= 0 ? i : Math.floor(Math.random() * PETS.length); };
 
@@ -6944,6 +6956,10 @@ function drawPet(id, x, y, s, facing, t) {
   ctx.translate(x, y);
   ctx.scale(facing * s, s);
   switch (id) {
+    case "og":                                           // a mini OG astronaut
+      ctx.scale(0.8, 0.8);
+      drawAstronaut(OG_LOOK, false, Math.sin(t * 8) * 1.5);
+      break;
     case "molly": {                                      // black dachshund + chihuahua
       const k = "#1b1b22";
       for (const lx of [-12, -7, 6, 10]) { ctx.fillStyle = k; ctx.fillRect(lx, -6, 3, 6); }
@@ -7754,19 +7770,21 @@ function drawSideQuestHUD(t) {
 // =====================================================================
 //  THE PETS MENU (title screen: P)
 // =====================================================================
-let petSel = 0;                                          // 0 = Beatrice, 1-10 = the pets you can free
+let petSel = 0;                                          // 0 = Beatrice, 1 = OG Astro, 2-11 = the pets you free in side quests
+const PET_SLOTS = 12;
+const slotPet = k => (k === 0 ? BEATRICE : k === 1 ? OG_PET : PETS[k - 2]);
 const openPets = () => { petSel = 0; state = "pets"; };
 function petsToggle() {
-  const pet = PETS[petSel - 1];
+  const pet = petSel > 0 ? slotPet(petSel) : null;
   if (!pet || !petFreed(pet.id)) return;
   petSave.chosen = petSave.chosen === pet.id ? null : pet.id;
   savePets();
 }
 function petsKey(c) {
-  if (c === "ArrowLeft" || c === "KeyA") petSel = (petSel + 10) % 11;
-  else if (c === "ArrowRight" || c === "KeyD") petSel = (petSel + 1) % 11;
+  if (c === "ArrowLeft" || c === "KeyA") petSel = (petSel + PET_SLOTS - 1) % PET_SLOTS;
+  else if (c === "ArrowRight" || c === "KeyD") petSel = (petSel + 1) % PET_SLOTS;
   else if (c === "ArrowUp" || c === "KeyW") petSel = Math.max(0, petSel - 4);
-  else if (c === "ArrowDown" || c === "KeyS") petSel = Math.min(10, petSel + 4);
+  else if (c === "ArrowDown" || c === "KeyS") petSel = Math.min(PET_SLOTS - 1, petSel + 4);
   else if (c === "Enter" || c === "Space") petsToggle();
   else if (c === "Escape" || c === "KeyP") state = "title";
 }
@@ -7775,9 +7793,9 @@ function drawPets(t) {
   panel(20, 16, VIEW_W - 40, 690);
   txt("PETS", cx, 28, 18, "#ffd447", "center");
   txt(`${petSave.freed.length} OF ${PETS.length} FREED   ·   BEATRICE ALWAYS COMES`, cx, 52, 7, "#c8d3ff", "center");
-  for (let k = 0; k < 11; k++) {
+  for (let k = 0; k < PET_SLOTS; k++) {
     const col = k % 4, row = Math.floor(k / 4), x = 34 + col * 104, y = 68 + row * 96;
-    const pet = k === 0 ? BEATRICE : PETS[k - 1], free = k === 0 || petFreed(pet.id), sel = k === petSel;
+    const pet = slotPet(k), free = k === 0 || petFreed(pet.id), sel = k === petSel;
     ctx.fillStyle = sel ? "rgba(255,212,71,0.16)" : "rgba(255,255,255,0.05)";
     rr(x, y, 96, 88, 8); ctx.fill();
     if (sel) { ctx.strokeStyle = "#ffd447"; ctx.lineWidth = 2; ctx.stroke(); }
@@ -7788,12 +7806,12 @@ function drawPets(t) {
       txt(pet.name, x + 48, y + 72, 7, pet.color, "center");
     } else {
       txt("?", x + 48, y + 26, 22, "rgba(255,255,255,0.3)", "center");
-      txt(`QUEST ${k}`, x + 48, y + 72, 7, "rgba(255,255,255,0.4)", "center");
+      txt(`QUEST ${k - 1}`, x + 48, y + 72, 7, "rgba(255,255,255,0.4)", "center");
     }
     if (USE_BUTTONS()) uiButton("", x, y, 96, 88, () => { if (petSel === k) petsToggle(); else petSel = k; }, "", 0, false);
   }
   // About the selected pet
-  const pet = petSel === 0 ? BEATRICE : PETS[petSel - 1], free = petSel === 0 || petFreed(pet.id), y0 = 368;
+  const pet = slotPet(petSel), free = petSel === 0 || petFreed(pet.id), y0 = 368;
   ctx.fillStyle = "rgba(255,255,255,0.05)"; rr(34, y0, VIEW_W - 68, 270, 10); ctx.fill();
   if (free) {
     txt(pet.name, cx, y0 + 12, 14, pet.color, "center");
@@ -7811,8 +7829,8 @@ function drawPets(t) {
     }
   } else {
     txt("???", cx, y0 + 20, 16, "rgba(255,255,255,0.5)", "center");
-    txt(`TRAPPED IN SIDE QUEST ${petSel}:`, cx, y0 + 70, 8, "#c8d3ff", "center");
-    txt(SQ_WORLDS[petSel - 1].name, cx, y0 + 90, 10, "#ffd447", "center");
+    txt(`TRAPPED IN SIDE QUEST ${petSel - 1}:`, cx, y0 + 70, 8, "#c8d3ff", "center");
+    txt(SQ_WORLDS[petSel - 2].name, cx, y0 + 90, 10, "#ffd447", "center");
     txt("FIND A GOLD PORTAL IN THE CLIMB", cx, y0 + 130, 8, "#ffffff", "center");
     txt("AND BEAT THE BOSS TO FREE THIS PET!", cx, y0 + 148, 8, "#ffffff", "center");
   }
@@ -7825,10 +7843,10 @@ function drawPets(t) {
 //  PET POWERS IN THE CLIMB
 // =====================================================================
 const petPos = { x: 0, y: 0, cd: 0, facing: 1 };
-const PET_FIRST_CD = { molly: 2, cleo: 8, pepper: 1, sprinkles: 25, ember: 2, nova: 12 };
+const PET_FIRST_CD = { molly: 2, cleo: 8, pepper: 1, sprinkles: 25, ember: 2, nova: 12, og: 0 };
 function petStartRun() {                                 // called after the climb is reset
   const id = activePet();
-  Object.assign(petPos, { x: player.x, y: player.y, cd: PET_FIRST_CD[id] || 0, facing: 1 });
+  Object.assign(petPos, { x: player.x, y: player.y, cd: PET_FIRST_CD[id] || 0, facing: 1, armed: false });
   if (id === "biscuit") st.airJumps += 1;
   if (id === "dusty") st.runSpeed *= 1.2;
   if (id === "sprinkles") boosts = st.boostMax;
@@ -7866,6 +7884,9 @@ function updatePet(dt) {
       puff(cx + p.facing * 60, cy, 18, 160, "255,140,40");
       floatText(petPos.x, petPos.y + 40, "FIRE!", "#ff7a3a");
     }
+  } else if (id === "og") {                           // BACKUP JETPACK: an extra mid-air jump, then it recharges
+    if (p.onGround) petPos.armed = false;
+    else if (!petPos.armed && petPos.cd <= 0 && !(p.coyote > 0)) { petPos.armed = true; p.airJumpsLeft++; }
   } else if (id === "nova" && petPos.cd <= 0) {
     petPos.cd = 35;
     p.starTime = 4;
@@ -7883,7 +7904,7 @@ function drawClimbPet(t) {
 function drawPetHUD() {
   const id = activePet();
   if (!id) return;
-  const pet = PETS.find(p => p.id === id), cd = petPos.cd > 0 && PET_FIRST_CD[id] !== undefined ? Math.ceil(petPos.cd) : 0;
+  const pet = petById(id), cd = petPos.cd > 0 && PET_FIRST_CD[id] !== undefined ? Math.ceil(petPos.cd) : 0;
   txt(`${pet.name}: ${pet.power}${cd ? ` ${cd}s` : ""}`, VIEW_W - 26, VIEW_H - 112, 7, cd ? "rgba(255,255,255,0.55)" : pet.color, "right");
 }
 
