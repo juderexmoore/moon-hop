@@ -78,6 +78,7 @@ const CREDITS = [
   { round: 12, who: "Daddy", what: "3D view: platforms become solid blocks with depth, shadows and haze. Press 3 or tap 3D to switch." },
   { round: 13, who: "Daddy", what: "3D by default, checkpoint flags on every rest ledge, starting in any biome you've reached, and real horizons for every land biome." },
   { round: 14, who: "Daddy", what: "Portals! Jump into one for 1 of 10 mini-games. Win and get a power-up that stays (and stacks) until you fall. Plus mouse controls." },
+  { round: 15, who: "G.", what: "Explore mode! Walk around a 3D world with Moon Base, the Frosty Peaks, the Jungle, Sunny Beach and the Crater Fields. Do quests for coins and spend them at Bolt's Shop on gear and power-ups for your next climb." },
 ];
 
 // ---------- Tuning ----------
@@ -880,6 +881,7 @@ function startRun() {
   setWorld(MAIN_WORLD);
   resetWorld();
   if (startBiome > 0) placeAtBiome(Math.min(startBiome, bestBiome));
+  usePackedItems();                                     // power-ups bought in the explore shop (Round 15)
   state = "playing";
 }
 
@@ -1156,6 +1158,7 @@ window.addEventListener("keyup", e => { keys[e.code] = false; });
 window.addEventListener("blur", () => {
   for (const k in keys) keys[k] = false;
   if (state === "playing") state = "paused";
+  if (state === "explore" && !ex.menu) ex.menu = "pause";
 });
 
 function onKeyPress(e) {
@@ -1164,6 +1167,7 @@ function onKeyPress(e) {
     if (c === "Space" || c === "Enter") startRun();
     else if (c === "KeyC") openCredits();
     else if (c === "KeyS") openSandbox();
+    else if (c === "KeyX") openExplore();
     else if (c === "Digit3") toggle3D();
     else if (c === "KeyB" && bestBiome > 0) startBiome = (startBiome + 1) % (bestBiome + 1);   // choose a start biome
   } else if (state === "sandbox") {
@@ -1193,6 +1197,8 @@ function onKeyPress(e) {
     handleOverKey(e);
   } else if (state === "minigame") {
     minigameKey(c);
+  } else if (state === "explore") {
+    exploreKey(e);
   }
   if (/^(Arrow|Key[ADW]$)/.test(c)) mouseSteer = false;           // keyboard steering wins over the mouse
 }
@@ -1387,6 +1393,12 @@ canvas.addEventListener("pointerdown", ev => {
   for (let i = uiButtons.length - 1; i >= 0; i--) {
     const b = uiButtons[i];
     if (m.x >= b.x && m.x <= b.x + b.w && m.y >= b.y && m.y <= b.y + b.h) { b.action(m); return; }
+  }
+  if (state === "explore" && isMouse && !ex.menu) {        // mouse exploring: hold left to walk, right to shoot
+    try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* fine */ }
+    if (ev.button === 0) keys.MouseL = true;
+    else if (ev.button === 2) keys.MouseR = true;
+    return;
   }
   if (state === "editor") editorPress(m, ev.button);
 });
@@ -2495,6 +2507,7 @@ function fellOff() {
 
 function update(dt) {
   if (state === "minigame") { updateMinigame(dt); return; }
+  if (state === "explore") { updateExplore(dt); return; }
   if (state === "playing") {
     const p = player;
     runTime += dt;
@@ -4343,14 +4356,15 @@ function drawTitle(t) {
   drawBoard(cx, 292, -1, t);
   if (USE_BUTTONS()) {
     uiButton(IS_TOUCH ? "TAP TO PLAY" : "CLICK TO PLAY", cx - 110, 498, 220, 36, startRun, "#ffffff", 12);
-    uiButton("SANDBOX", cx - 156, 540, 100, 28, openSandbox, "#7dff7a", 8);
-    uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx - 50, 540, 100, 28, toggle3D, "#ffd447", 8);
-    uiButton("CREDITS", cx + 56, 540, 100, 28, openCredits, "#c8d3ff", 8);
+    uiButton("SANDBOX", cx - 206, 540, 96, 28, openSandbox, "#7dff7a", 8);
+    uiButton("EXPLORE", cx - 102, 540, 96, 28, openExplore, "#5ad1ff", 8);
+    uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx + 2, 540, 96, 28, toggle3D, "#ffd447", 8);
+    uiButton("CREDITS", cx + 106, 540, 96, 28, openCredits, "#c8d3ff", 8);
     ctx.save();
     ctx.translate(0, 18);                    // the save notice goes below the buttons
   } else {
     if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 506, 13, "#ffffff", "center");
-    txt(`S = SANDBOX   3 = 3D VIEW: ${VIEW3D ? "ON" : "OFF"}   C = CREDITS`, cx, 534, 7, "#c8d3ff", "center");
+    txt(`S = SANDBOX  X = EXPLORE  3 = 3D: ${VIEW3D ? "ON" : "OFF"}  C = CREDITS`, cx, 534, 7, "#c8d3ff", "center");
   }
   drawSaveNotice(cx);
   if (USE_BUTTONS()) ctx.restore();
@@ -4802,6 +4816,7 @@ function render(t) {
   ctx = wctx;
   wctx.setTransform(1 / PIXEL, 0, 0, 1 / PIXEL, 0, 0);
   if (state === "minigame" && mg) mg.game.draw(mg, t);        // a mini-game takes over the whole screen
+  else if (state === "explore") drawExplore(t);                // the 3D explore world (Round 15)
   else drawWorld(t);
 
   // 2) Blow it up with sharp pixel edges, then put the words on top
@@ -4830,6 +4845,7 @@ function render(t) {
   else if (state === "choose") drawChoose(t);
   else if (state === "over") drawOver(t);
   else if (state === "minigame" && mg) drawMinigameHUD(t);
+  else if (state === "explore") drawExploreHUD(t);
 }
 
 const inRunState = () => state === "playing" || state === "paused" || state === "choose" || state === "over";
@@ -5539,11 +5555,996 @@ function drawMinigameHUD(t) {
 }
 
 // =====================================================================
+//  EXPLORE MODE (Round 15)
+//  A 3D world to walk around, seen from behind your astronaut. People around the map
+//  give quests; quests (and coins lying around) pay COINS. Spend them at Bolt's Shop
+//  on gear for exploring, or on power-ups you take into your next climb.
+//  The 3D is a ray caster: one ray per pixel column finds the nearest wall.
+// =====================================================================
+const EXN = 48, EXC = 24;                                  // map size (cells) and its middle
+const EX_W = VIEW_W / PIXEL, EX_H = VIEW_H / PIXEL;         // drawn at the chunky pixel size
+const EX_FOV = 1.2, EX_HORIZON = Math.round(EX_H * 0.46);
+const EX_PROJ = (EX_W / 2) / Math.tan(EX_FOV / 2);
+const EX_CAMH = 0.5, EX_WALLH = 1.4, EX_FAR = 15, EX_CAM_BACK = 1.9, EX_R = 0.25;
+const EX_SPAWN = [24, 26.5];
+const EX_SAVE_KEY = "moonhop.explore.v1";
+const EX_ZONE_IDS = ["base", "snow", "jungle", "beach", "moon"];
+const EX_ZONES = {
+  base:   { name: "MOON BASE",     sky: [40, 60, 130],  fog: [150, 175, 225], map: [120, 130, 165], grem: "#8a8fa8", color: "#c8d3ff" },
+  snow:   { name: "FROSTY PEAKS",  sky: [80, 130, 200], fog: [215, 230, 248], map: [215, 232, 250], grem: "#7fb8ff", color: "#e6f4ff" },
+  jungle: { name: "THE JUNGLE",    sky: [30, 100, 80],  fog: [140, 190, 130], map: [70, 150, 60],   grem: "#5ad15a", color: "#7dff7a" },
+  beach:  { name: "SUNNY BEACH",   sky: [50, 140, 230], fog: [255, 222, 175], map: [235, 210, 150], grem: "#ff9f40", color: "#ffd447" },
+  moon:   { name: "CRATER FIELDS", sky: [6, 6, 22],     fog: [45, 40, 80],    map: [140, 130, 165], grem: "#c39bff", color: "#c39bff" },
+};
+const exZoneAt = (x, y) => {
+  const dx = x - EXC, dy = y - EXC;
+  if (Math.abs(dx) < 7 && Math.abs(dy) < 7) return "base";
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "jungle" : "moon";
+  return dy < 0 ? "snow" : "beach";
+};
+const exInBase = (x, y) => x > 17.6 && x < 30.4 && y > 17.6 && y < 30.4;
+
+// The quest-givers. Each one has their own kind of quest that gets bigger every time.
+const EX_NPCS = [
+  { id: "cap", name: "CAPTAIN COMET", at: [27, 21], quest: "deliver", color: "#8fbaff",
+    char: { suit: 8, visor: 5, pack: 0, hat: 2, hatColor: 5, wings: 9 } },
+  { id: "sal", name: "SNOWY SAL", at: [24, 6], quest: "gems", color: "#8fe3ff",
+    char: { suit: 0, visor: 8, pack: 7, hat: 4, hatColor: 8, wings: 9 } },
+  { id: "jo", name: "JUNGLE JO", at: [42, 24], quest: "gremlins", color: "#7dff7a",
+    char: { suit: 6, visor: 2, pack: 11, hat: 6, hatColor: 11, wings: 9 } },
+  { id: "sandy", name: "SANDY", at: [24, 42], quest: "puppy", color: "#ffd447",
+    char: { suit: 5, visor: 7, pack: 3, hat: 7, hatColor: 10, wings: 9 } },
+  { id: "crater", name: "DR. CRATER", at: [6, 24], quest: "race", color: "#c39bff",
+    char: { suit: 1, visor: 9, pack: 2, hat: 5, hatColor: 3, wings: 9 } },
+];
+const EX_SHOP_SPOT = { id: "shop", name: "BOLT'S SHOP", at: [21, 21], color: "#5ad1ff" };
+
+// Bolt's Shop. Gear works in the 3D world; the last three are packed for your next climb.
+const EX_SHOP = [
+  { id: "speed", name: "SPEED BOOTS", desc: "WALK FASTER WHILE EXPLORING", gear: true, max: 3, cost: l => 40 + 40 * l },
+  { id: "magnet", name: "COIN MAGNET", desc: "PULL IN COINS FROM FARTHER AWAY", gear: true, max: 3, cost: l => 30 + 30 * l },
+  { id: "blaster", name: "BLASTER BOOST", desc: "STRONGER, FASTER BLASTER SHOTS", gear: true, max: 3, cost: l => 50 + 50 * l },
+  { id: "hearts", name: "EXTRA HEART", desc: "+1 HEART WHILE EXPLORING", gear: true, max: 3, cost: l => 40 + 40 * l },
+  { id: "relic", name: "MYSTERY POWER-UP", desc: "A MINI-GAME POWER-UP (UNTIL YOU FALL)", max: 5, cost: () => 30 },
+  { id: "jumps", name: "SUPER JUMP PACK", desc: "START WITH ALL YOUR SUPER JUMPS", max: 1, cost: () => 15 },
+  { id: "shield", name: "STARTER SHIELD", desc: "START WITH A SHIELD (STACKS TO 3)", max: 3, cost: () => 20 },
+];
+
+function exLoad() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(EX_SAVE_KEY)); } catch (e) { /* new save */ }
+  if (!d || typeof d !== "object") d = {};
+  const n = (v, max) => clamp(Math.floor(Number(v) || 0), 0, max);
+  const g = d.gear || {}, pk = d.packed || {}, lv = d.levels || {};
+  return {
+    coins: n(d.coins, 9999999),
+    gear: { speed: n(g.speed, 3), magnet: n(g.magnet, 3), blaster: n(g.blaster, 3), hearts: n(g.hearts, 3) },
+    packed: { relic: n(pk.relic, 5), jumps: n(pk.jumps, 1), shield: n(pk.shield, 3) },
+    levels: Object.fromEntries(EX_NPCS.map(o => [o.id, n(lv[o.id], 999)])),
+    explored: typeof d.explored === "string" && d.explored.length === EXN * EXN ? d.explored : "",
+  };
+}
+let exSave = exLoad();
+
+const ex = {
+  p: { x: EX_SPAWN[0], y: EX_SPAWN[1], a: -Math.PI / 2 }, cam: { x: 0, y: 0 }, dog: { x: 0, y: 0 },
+  t: 0, menu: null, sel: 0, shopArm: -1, talk: null, near: null, moving: false,
+  coins: [], items: [], enemies: [], shots: [], rings: [], ringI: 0, puppy: null, quest: null,
+  hearts: 3, hurt: 0, fireCd: 0, zone: "base", zoneFlash: 0, msg: "", msgT: 0, msgColor: "#fff",
+  sky: { top: [40, 60, 130], fog: [150, 175, 225] }, coinT: 0, enemyT: 0,
+  explored: null, mapDirty: true, lastCell: -1, saveT: 4, reach: [],
+};
+
+function exSaveNow() {
+  if (ex.explored) {
+    let s = "";
+    for (let i = 0; i < ex.explored.length; i++) s += ex.explored[i] ? "1" : "0";
+    exSave.explored = s;
+  }
+  try { localStorage.setItem(EX_SAVE_KEY, JSON.stringify(exSave)); } catch (e) { /* just for this visit */ }
+}
+
+// ---------- Building the world ----------
+let exMap = null, exZones = null, exWallTex = null, exFloorTex = null;
+const exHash = (x, y, s) => {
+  let h = (x * 374761393 + y * 668265263 + s * 982451653) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+function exTex(fn) {                                    // a 16x16 pixel picture, made by a little recipe
+  const a = new Uint8ClampedArray(16 * 16 * 3);
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) a.set(fn(x, y), (y * 16 + x) * 3);
+  return a;
+}
+function exMakeTextures() {
+  const walls = {
+    base: (x, y) => { const n = exHash(x, y, 1) * 14;
+      if ((x % 8 === 2 || x % 8 === 6) && (y % 8 === 2 || y % 8 === 6)) return [215, 222, 240];
+      return x % 8 === 0 || y % 8 === 0 ? [88, 96, 125] : [150 + n, 160 + n, 190 + n]; },
+    snow: (x, y) => { const n = exHash(x, y, 3) * 20;
+      if (y < 3 + Math.floor(exHash(x, 0, 2) * 2)) return [248, 252, 255];
+      return y % 5 === 0 || (x + (Math.floor(y / 5) % 2) * 4) % 8 === 0 ? [130, 170, 212] : [175 + n, 215 + n, 242]; },
+    jungle: (x, y) => { const n = exHash(x, y, 4);
+      if (y > 12) return [92 + n * 20, 62, 36];
+      if (n > 0.9) return [130, 210, 95];
+      return exHash(x >> 1, y >> 1, 5) > 0.5 ? [60 + n * 15, 150 + n * 15, 60] : [35, 100 + n * 15, 45]; },
+    beach: (x, y) => { const n = exHash(x, y, 6) * 18;
+      return y % 4 === 0 || (x + (Math.floor(y / 4) % 2) * 4) % 8 === 0 ? [175, 140, 95] : [225 + n, 195 + n, 140 + n / 2]; },
+    moon: (x, y) => { const n = exHash(x, y, 7);
+      if (exHash(x >> 2, y >> 2, 8) > 0.8 && n > 0.45) return [195, 125, 255];
+      return [100 + n * 30, 94 + n * 30, 122 + n * 30]; },
+  };
+  const floors = {
+    base: (x, y) => { const n = exHash(x, y, 9) * 10; return x % 8 === 0 || y % 8 === 0 ? [70, 78, 102] : [108 + n, 115 + n, 138 + n]; },
+    snow: (x, y) => { const n = exHash(x, y, 10) * 16; return [226 + n, 234 + n, 250]; },
+    jungle: (x, y) => { const n = exHash(x, y, 11); return n > 0.82 ? [105, 195, 72] : [58 + n * 30, 132 + n * 30, 52]; },
+    beach: (x, y) => { const n = exHash(x, y, 12) * 22; return [228 + n / 3, 205 + n / 2, 148 + n]; },
+    moon: (x, y) => { const n = exHash(x, y, 13) * 20, d = Math.hypot(x - 7.5, y - 7.5);
+      return d > 4.5 && d < 6 ? [96, 90, 112] : [132 + n, 127 + n, 146 + n]; },
+  };
+  exWallTex = EX_ZONE_IDS.map(z => exTex(walls[z]));
+  exFloorTex = EX_ZONE_IDS.map(z => exTex(floors[z]));
+}
+
+function exBuild() {
+  const m = new Uint8Array(EXN * EXN), R = mulberry32(1515);
+  const set = (x, y, v) => { if (x >= 0 && y >= 0 && x < EXN && y < EXN) m[y * EXN + x] = v; };
+  for (let i = 0; i < EXN; i++) { set(i, 0, 1); set(i, EXN - 1, 1); set(0, i, 1); set(EXN - 1, i, 1); }
+  // Rocks, trees, ice and ruins all over, but the four roads out of the base stay clear.
+  const road = (x, y) => (x >= EXC - 2 && x <= EXC + 1) || (y >= EXC - 2 && y <= EXC + 1);
+  for (let k = 0; k < 190; k++) {
+    const x = 2 + Math.floor(R() * (EXN - 4)), y = 2 + Math.floor(R() * (EXN - 4));
+    if (Math.abs(x - EXC) < 9 && Math.abs(y - EXC) < 9) continue;
+    const w = 1 + Math.floor(R() * 3), h = 1 + Math.floor(R() * 3);
+    for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) if (!road(x + i, y + j)) set(x + i, y + j, 1);
+  }
+  // Moon Base: a walled square with a door on each side
+  for (let i = -6; i <= 5; i++) { set(EXC + i, EXC - 6, 1); set(EXC + i, EXC + 5, 1); set(EXC - 6, EXC + i, 1); set(EXC + 5, EXC + i, 1); }
+  for (const d of [-2, -1, 0, 1]) { set(EXC + d, EXC - 6, 0); set(EXC + d, EXC + 5, 0); set(EXC - 6, EXC + d, 0); set(EXC + 5, EXC + d, 0); }
+  // A clear plaza with four pillars around each quest-giver out in the world
+  for (const npc of EX_NPCS.slice(1)) {
+    const nx = Math.floor(npc.at[0]), ny = Math.floor(npc.at[1]);
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) set(nx + dx, ny + dy, 0);
+    for (const [dx, dy] of [[-4, -4], [3, -4], [-4, 3], [3, 3]]) set(nx + dx, ny + dy, 1);
+  }
+  for (let i = 0; i < EXN; i++) { set(i, 0, 1); set(i, EXN - 1, 1); set(0, i, 1); set(EXN - 1, i, 1); }
+  // Fill in any pocket you couldn't walk into, so every coin and quest item is reachable.
+  const seen = new Uint8Array(EXN * EXN), start = Math.floor(EX_SPAWN[1]) * EXN + Math.floor(EX_SPAWN[0]);
+  const queue = [start];
+  seen[start] = 1;
+  while (queue.length) {
+    const i = queue.pop(), x = i % EXN, y = (i / EXN) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const j = (y + dy) * EXN + x + dx;
+      if (!m[j] && !seen[j]) { seen[j] = 1; queue.push(j); }
+    }
+  }
+  ex.reach = [];
+  for (let i = 0; i < m.length; i++) { if (!m[i] && !seen[i]) m[i] = 1; if (!m[i]) ex.reach.push(i); }
+  exMap = m;
+  exZones = new Uint8Array(EXN * EXN);
+  for (let i = 0; i < m.length; i++) exZones[i] = EX_ZONE_IDS.indexOf(exZoneAt(i % EXN + 0.5, ((i / EXN) | 0) + 0.5));
+  exMakeTextures();
+}
+
+const exWall = (x, y) => {
+  const mx = Math.floor(x), my = Math.floor(y);
+  return mx < 0 || my < 0 || mx >= EXN || my >= EXN || exMap[my * EXN + mx] === 1;
+};
+function exBlocked(x, y, r, noBase) {
+  for (const [px, py] of [[x - r, y - r], [x + r, y - r], [x - r, y + r], [x + r, y + r]]) {
+    if (exWall(px, py) || (noBase && exInBase(px, py))) return true;
+  }
+  return false;
+}
+function exMove(o, dx, dy, r, noBase = false) {         // slide along walls instead of stopping dead
+  if (!exBlocked(o.x + dx, o.y, r, noBase)) o.x += dx;
+  if (!exBlocked(o.x, o.y + dy, r, noBase)) o.y += dy;
+}
+function exRandomCell(ok) {
+  for (let k = 0; k < 600; k++) {
+    const i = ex.reach[Math.floor(Math.random() * ex.reach.length)];
+    const x = i % EXN + 0.5, y = ((i / EXN) | 0) + 0.5;
+    if (ok(x, y)) return { x, y };
+  }
+  const i = ex.reach[Math.floor(Math.random() * ex.reach.length)];
+  return { x: i % EXN + 0.5, y: ((i / EXN) | 0) + 0.5 };
+}
+const exDist = (a, x, y) => Math.hypot(a.x - x, a.y - y);
+const exSay = (msg, color = "#ffffff", secs = 2.2) => { ex.msg = msg; ex.msgColor = color; ex.msgT = secs; };
+const exNpc = id => EX_NPCS.find(n => n.id === id);
+
+function exGremlin(x, y, zone, quest, hp = 2) {
+  return { x, y, zone, quest, hp, max: hp, dir: Math.random() * 6.28, turnT: 0, flash: 0, ph: Math.random() * 6 };
+}
+function exSpawnCoin() {
+  const P = ex.p, c = exRandomCell((x, y) => !exInBase(x, y) && Math.hypot(x - P.x, y - P.y) > 5);
+  ex.coins.push({ x: c.x, y: c.y, ph: Math.random() * 6 });
+}
+
+function openExplore() {
+  if (!exMap) exBuild();
+  const P = ex.p;
+  Object.assign(P, { x: EX_SPAWN[0], y: EX_SPAWN[1], a: -Math.PI / 2 });
+  Object.assign(ex, { menu: null, talk: null, quest: null, items: [], enemies: [], shots: [], rings: [], ringI: 0,
+                      puppy: null, coins: [], hurt: 0, fireCd: 0, zone: "base", zoneFlash: 2.5, coinT: 0, enemyT: 0,
+                      lastCell: -1, mapDirty: true, near: null });
+  ex.hearts = 3 + exSave.gear.hearts;
+  ex.sky = { top: EX_ZONES.base.sky.slice(), fog: EX_ZONES.base.fog.slice() };
+  ex.explored = new Uint8Array(EXN * EXN);
+  for (let i = 0; i < exSave.explored.length; i++) ex.explored[i] = exSave.explored.charCodeAt(i) === 49 ? 1 : 0;
+  for (let k = 0; k < 24; k++) exSpawnCoin();
+  for (let k = 0; k < 5; k++) {
+    const c = exRandomCell((x, y) => !exInBase(x, y) && Math.hypot(x - P.x, y - P.y) > 9);
+    ex.enemies.push(exGremlin(c.x, c.y, exZoneAt(c.x, c.y), false));
+  }
+  Object.assign(ex.dog, { x: P.x + 0.75, y: P.y });
+  for (const k in keys) keys[k] = false;
+  exPlaceCamera();
+  exSay("TALK TO PEOPLE WITH A ! FOR QUESTS", "#ffd447", 4);
+  state = "explore";
+}
+
+function exLeave() {
+  exSaveNow();
+  for (const k in keys) keys[k] = false;
+  showTitle();
+}
+
+// ---------- Quests ----------
+function exPlanQuest(npc) {
+  const L = Math.min(5, exSave.levels[npc.id] || 0), base = { type: npc.quest, npc: npc.id };
+  if (npc.quest === "gems") {
+    const n = 4 + L;
+    return { ...base, total: n, reward: 30 + 10 * L, title: `FIND ${n} ICE GEMS`,
+             text: `BRRR! THE WIND BLEW MY ICE GEMS ALL OVER THE FROSTY PEAKS. CAN YOU FIND ${n} OF THEM?` };
+  }
+  if (npc.quest === "gremlins") {
+    const n = 4 + L;
+    return { ...base, total: n, hp: 2 + Math.floor(L / 2), reward: 35 + 10 * L, title: `ZAP ${n} JUNGLE GREMLINS`,
+             text: `ORANGE GREMLINS ARE EATING ALL MY BANANAS! ZAP ${n} OF THEM WITH YOUR BLASTER.` };
+  }
+  if (npc.quest === "puppy") {
+    return { ...base, total: 1, reward: 40 + 10 * L, title: "FIND SANDY'S PUPPY",
+             text: "MY PUPPY RAN OFF TO EXPLORE THE WORLD! PLEASE FIND HER AND BRING HER BACK TO ME." };
+  }
+  if (npc.quest === "race") {
+    const n = 5 + L, time = 18 + n * 6;
+    return { ...base, total: n, time, reward: 45 + 10 * L, title: "RING RACE",
+             text: `TRY MY NEW RACE TRACK! RUN THROUGH ${n} GLOWING RINGS IN ${time} SECONDS.` };
+  }
+  const target = pick(EX_NPCS.filter(o => o.id !== npc.id));
+  return { ...base, total: 1, target: target.id, reward: 25 + 5 * L, title: `DELIVER TO ${target.name}`,
+           text: `WELCOME TO MOON BASE! PLEASE TAKE THIS PACKAGE TO ${target.name}. FOLLOW THE ARROW!` };
+}
+
+function exStartQuest(plan) {
+  const q = { ...plan, done: 0 }, npc = exNpc(q.npc), P = ex.p;
+  const far = (x, y) => Math.hypot(x - npc.at[0], y - npc.at[1]);
+  ex.quest = q;
+  if (q.type === "gems") {
+    for (let k = 0; k < q.total; k++) {
+      const c = exRandomCell((x, y) => exZoneAt(x, y) === "snow" && far(x, y) > 3);
+      ex.items.push({ x: c.x, y: c.y, ph: Math.random() * 6 });
+    }
+  } else if (q.type === "gremlins") {
+    for (let k = 0; k < q.total; k++) {
+      const c = exRandomCell((x, y) => exZoneAt(x, y) === "jungle" && Math.hypot(x - P.x, y - P.y) > 5);
+      ex.enemies.push(exGremlin(c.x, c.y, "jungle", true, q.hp));
+    }
+  } else if (q.type === "puppy") {
+    const c = exRandomCell((x, y) => !exInBase(x, y) && far(x, y) > 14);
+    ex.puppy = { x: c.x, y: c.y, follow: false, face: 1 };
+  } else if (q.type === "race") {
+    let prev = { x: npc.at[0], y: npc.at[1] };
+    ex.rings = [];
+    ex.ringI = 0;
+    for (let k = 0; k < q.total; k++) {
+      let c = null;
+      for (let tries = 0; tries < 200 && !c; tries++) {
+        const cand = exRandomCell((x, y) => exZoneAt(x, y) === "moon");
+        const d = exDist(prev, cand.x, cand.y);
+        if (d >= 3.5 && d <= 8 && ex.rings.every(r => exDist(r, cand.x, cand.y) > 2.5)) c = cand;
+      }
+      c = c || exRandomCell((x, y) => exZoneAt(x, y) === "moon");
+      ex.rings.push(c);
+      prev = c;
+    }
+  }
+  exSay("QUEST STARTED! FOLLOW THE ARROW", "#ffd447");
+}
+
+function exCleanQuest() {
+  ex.items = [];
+  ex.enemies = ex.enemies.filter(e => !e.quest);
+  ex.puppy = null;
+  ex.rings = [];
+  ex.quest = null;
+}
+function exFinishQuest() {
+  const q = ex.quest;
+  exSave.coins += q.reward;
+  exSave.levels[q.npc] = (exSave.levels[q.npc] || 0) + 1;
+  exCleanQuest();
+  exSay(`QUEST COMPLETE! +${q.reward} COINS`, "#7dff7a", 3);
+  exSaveNow();
+}
+function exFailQuest(why) {
+  exCleanQuest();
+  exSay(why, "#ff8a7a", 3.5);
+}
+
+function exTarget() {                                    // where the quest arrow points
+  const q = ex.quest, P = ex.p;
+  if (!q) return null;
+  const nearest = list => list.reduce((b, o) => (!b || exDist(o, P.x, P.y) < exDist(b, P.x, P.y) ? o : b), null);
+  const at = npc => ({ x: npc.at[0], y: npc.at[1] });
+  if (q.type === "gems") return nearest(ex.items);
+  if (q.type === "gremlins") return nearest(ex.enemies.filter(e => e.quest));
+  if (q.type === "puppy") return ex.puppy.follow ? at(exNpc("sandy")) : ex.puppy;
+  if (q.type === "race") return ex.rings[ex.ringI];
+  return at(exNpc(q.target));
+}
+function exProgress() {
+  const q = ex.quest;
+  if (q.type === "gems") return `${q.done}/${q.total} GEMS FOUND`;
+  if (q.type === "gremlins") return `${q.done}/${q.total} GREMLINS ZAPPED`;
+  if (q.type === "puppy") return ex.puppy.follow ? "TAKE HER BACK TO SANDY" : "LOOK FOR THE PUPPY";
+  if (q.type === "race") return `RING ${ex.ringI + 1} OF ${q.total}   ${Math.ceil(q.time)}s LEFT`;
+  return `GO TO ${exNpc(q.target).name}`;
+}
+
+function exUpdateQuest(dt) {
+  const q = ex.quest, P = ex.p;
+  if (!q) return;
+  if (q.type === "gems") {
+    for (let i = ex.items.length - 1; i >= 0; i--) {
+      if (exDist(ex.items[i], P.x, P.y) < 0.6) { ex.items.splice(i, 1); q.done++; exSay(`ICE GEM ${q.done} OF ${q.total}!`, "#8fe3ff"); }
+    }
+    if (q.done >= q.total) exFinishQuest();
+  } else if (q.type === "gremlins") {
+    if (q.done >= q.total) exFinishQuest();
+  } else if (q.type === "puppy") {
+    const pu = ex.puppy, sandy = exNpc("sandy");
+    if (!pu.follow && exDist(pu, P.x, P.y) < 1.1) { pu.follow = true; exSay("WOOF! THE PUPPY FOLLOWS YOU!", "#ffd447"); }
+    if (pu.follow) {
+      const tx = P.x - Math.cos(P.a) * 0.8 + Math.sin(P.a) * 0.5, ty = P.y - Math.sin(P.a) * 0.8 - Math.cos(P.a) * 0.5;
+      const d = Math.hypot(tx - pu.x, ty - pu.y);
+      if (d > 4) Object.assign(pu, { x: P.x, y: P.y });           // she catches up if she gets stuck
+      else if (d > 0.1) exMove(pu, (tx - pu.x) / d * Math.min(d, 3.6 * dt), (ty - pu.y) / d * Math.min(d, 3.6 * dt), 0.15);
+      if (Math.hypot(sandy.at[0] - P.x, sandy.at[1] - P.y) < 1.9) exFinishQuest();
+    }
+  } else if (q.type === "race") {
+    q.time -= dt;
+    if (exDist(ex.rings[ex.ringI], P.x, P.y) < 0.8) {
+      ex.ringI++;
+      q.done++;
+      if (q.done >= q.total) { exFinishQuest(); return; }
+      exSay(`RING ${q.done}!`, "#c39bff", 1);
+    }
+    if (q.time <= 0) exFailQuest("OUT OF TIME! ASK DR. CRATER TO TRY AGAIN");
+  } else {
+    const t = exNpc(q.target);
+    if (Math.hypot(t.at[0] - P.x, t.at[1] - P.y) < 1.8) exFinishQuest();
+  }
+}
+
+// ---------- Walking, shooting, coins, gremlins ----------
+function exPlaceCamera() {                               // behind you, but never inside a wall
+  const P = ex.p, dX = Math.cos(P.a), dY = Math.sin(P.a);
+  let d = 0.3;
+  while (d < EX_CAM_BACK && !exBlocked(P.x - dX * (d + 0.05), P.y - dY * (d + 0.05), 0.12)) d += 0.05;
+  ex.cam.x = P.x - dX * d;
+  ex.cam.y = P.y - dY * d;
+}
+function exReveal(x, y) {
+  for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) {
+    const cx = Math.floor(x) + dx, cy = Math.floor(y) + dy;
+    if (cx >= 0 && cy >= 0 && cx < EXN && cy < EXN && dx * dx + dy * dy <= 21) ex.explored[cy * EXN + cx] = 1;
+  }
+  ex.mapDirty = true;
+}
+function exShoot() {
+  const P = ex.p, dX = Math.cos(P.a), dY = Math.sin(P.a);
+  ex.fireCd = 0.4 * Math.pow(0.8, exSave.gear.blaster);
+  ex.shots.push({ x: P.x + dX * 0.3, y: P.y + dY * 0.3, dx: dX * 9, dy: dY * 9, life: 1.2 });
+}
+function exHurt(kx, ky) {
+  const P = ex.p;
+  ex.hearts--;
+  ex.hurt = 1.2;
+  exMove(P, kx * 0.6, ky * 0.6, EX_R);
+  if (ex.hearts > 0) return;
+  const lost = Math.floor(exSave.coins * 0.1);           // knocked out: back to base, minus a few coins
+  exSave.coins -= lost;
+  Object.assign(P, { x: EX_SPAWN[0], y: EX_SPAWN[1], a: -Math.PI / 2 });
+  ex.hearts = 3 + exSave.gear.hearts;
+  ex.hurt = 2;
+  if (ex.quest && ex.quest.type === "race") exCleanQuest();
+  if (ex.puppy) Object.assign(ex.puppy, { x: P.x, y: P.y + 0.6 });
+  exSay(lost ? `OUCH! BACK TO BASE. YOU DROPPED ${lost} COINS` : "OUCH! BACK TO BASE", "#ff8a7a", 3);
+  exSaveNow();
+}
+
+function updateExplore(dt) {
+  ex.t += dt;
+  if (ex.msgT > 0) ex.msgT -= dt;
+  if (ex.zoneFlash > 0) ex.zoneFlash -= dt;
+  const Z = EX_ZONES[ex.zone], k = Math.min(1, dt * 1.5);          // the sky changes as you walk between lands
+  for (let i = 0; i < 3; i++) {
+    ex.sky.top[i] += (Z.sky[i] - ex.sky.top[i]) * k;
+    ex.sky.fog[i] += (Z.fog[i] - ex.sky.fog[i]) * k;
+  }
+  if (ex.menu) return;
+  const P = ex.p;
+  let turn = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
+  let fwd = keys.ArrowUp || keys.KeyW || keys.MouseL || (IS_TOUCH && keys.Space) ? 1 : 0;
+  if (keys.ArrowDown || keys.KeyS) fwd -= 0.6;
+  if (keys.MouseL && !turn) turn = clamp((ed.mouse.x - VIEW_W / 2) / (VIEW_W * 0.3), -1, 1);   // MOUSE: steer toward the pointer
+  P.a += turn * 2.6 * dt;
+  const sp = 2.6 * (1 + 0.18 * exSave.gear.speed) * fwd * dt;
+  exMove(P, Math.cos(P.a) * sp, Math.sin(P.a) * sp, EX_R);
+  ex.moving = fwd !== 0;
+  exPlaceCamera();
+  const z = exZoneAt(P.x, P.y);
+  if (z !== ex.zone) { ex.zone = z; ex.zoneFlash = 2.5; }
+  const cell = Math.floor(P.y) * EXN + Math.floor(P.x);
+  if (cell !== ex.lastCell) { ex.lastCell = cell; exReveal(P.x, P.y); }
+  if (ex.hurt > 0) ex.hurt -= dt;
+
+  // Blaster
+  if (ex.fireCd > 0) ex.fireCd -= dt;
+  if ((keys.KeyF || keys.KeyJ || keys.MouseR) && ex.fireCd <= 0) exShoot();
+  const dmg = 1 + exSave.gear.blaster;
+  for (let i = ex.shots.length - 1; i >= 0; i--) {
+    const s = ex.shots[i];
+    s.x += s.dx * dt;
+    s.y += s.dy * dt;
+    s.life -= dt;
+    let gone = s.life <= 0 || exWall(s.x, s.y);
+    for (let j = ex.enemies.length - 1; j >= 0 && !gone; j--) {
+      const e = ex.enemies[j];
+      if (exDist(e, s.x, s.y) > 0.45) continue;
+      gone = true;
+      e.hp -= dmg;
+      e.flash = 0.15;
+      if (e.hp > 0) continue;
+      ex.enemies.splice(j, 1);
+      if (e.quest && ex.quest) { ex.quest.done++; exSay(`ZAPPED ${ex.quest.done} OF ${ex.quest.total}!`, "#7dff7a", 1.2); }
+      else for (let c = 0; c < 2; c++) ex.coins.push({ x: e.x + (c - 0.5) * 0.4, y: e.y, ph: Math.random() * 6 });
+    }
+    if (gone) ex.shots.splice(i, 1);
+  }
+
+  // Gremlins wander, and chase you when you're close (but they can't get into the base)
+  ex.enemyT -= dt;
+  if (ex.enemyT <= 0 && ex.enemies.filter(e => !e.quest).length < 6) {
+    ex.enemyT = 4;
+    const c = exRandomCell((x, y) => !exInBase(x, y) && Math.hypot(x - P.x, y - P.y) > 8);
+    ex.enemies.push(exGremlin(c.x, c.y, exZoneAt(c.x, c.y), false));
+  }
+  for (const e of ex.enemies) {
+    if (e.flash > 0) e.flash -= dt;
+    const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx, dy) || 0.01;
+    let vx, vy, speed;
+    if (d < 6 && !exInBase(P.x, P.y)) { vx = dx / d; vy = dy / d; speed = e.quest ? 1.7 : 1.4; }
+    else {
+      e.turnT -= dt;
+      if (e.turnT <= 0) { e.turnT = 1 + Math.random() * 2; e.dir = Math.random() * Math.PI * 2; }
+      vx = Math.cos(e.dir); vy = Math.sin(e.dir); speed = 0.7;
+    }
+    const ox = e.x, oy = e.y;
+    exMove(e, vx * speed * dt, vy * speed * dt, 0.25, true);
+    if (e.x === ox && e.y === oy) e.turnT = 0;
+    if (d < 0.5 && ex.hurt <= 0) exHurt(dx / d, dy / d);
+  }
+
+  // Coins: they come back over time, and the magnet pulls them in
+  ex.coinT -= dt;
+  if (ex.coinT <= 0 && ex.coins.length < 30) { ex.coinT = 3; exSpawnCoin(); }
+  const pull = 1.1 + 0.9 * exSave.gear.magnet;
+  for (let i = ex.coins.length - 1; i >= 0; i--) {
+    const c = ex.coins[i], d = exDist(c, P.x, P.y);
+    if (d < pull && d > 0.01) { const s = Math.min(d, 5 * dt); c.x += (P.x - c.x) / d * s; c.y += (P.y - c.y) / d * s; }
+    if (d < 0.45) { ex.coins.splice(i, 1); exSave.coins++; }
+  }
+
+  exUpdateQuest(dt);
+
+  // Your flying dog keeps up beside you
+  const tx = P.x + Math.cos(P.a) * 0.2 - Math.sin(P.a) * 0.75, ty = P.y + Math.sin(P.a) * 0.2 + Math.cos(P.a) * 0.75;
+  ex.dog.x += (tx - ex.dog.x) * Math.min(1, dt * 4);
+  ex.dog.y += (ty - ex.dog.y) * Math.min(1, dt * 4);
+
+  // Who's close enough to talk to?
+  ex.near = null;
+  let best = 1.7;
+  for (const n of [...EX_NPCS, EX_SHOP_SPOT]) {
+    const d = Math.hypot(n.at[0] - P.x, n.at[1] - P.y);
+    if (d < best) { best = d; ex.near = n; }
+  }
+  ex.saveT -= dt;
+  if (ex.saveT <= 0) { ex.saveT = 4; exSaveNow(); }
+}
+
+// ---------- Talking and the shop ----------
+function exTalk() {
+  const npc = ex.near, q = ex.quest;
+  if (!npc) return;
+  for (const k in keys) keys[k] = false;
+  if (npc.id === "shop") { ex.menu = "shop"; ex.sel = 0; ex.shopArm = -1; return; }
+  if (q && q.npc === npc.id) ex.talk = { npc, text: `HOW'S IT GOING? ${exProgress()}.`, plan: null };
+  else if (q) ex.talk = { npc, text: `YOU'RE ALREADY ON A QUEST: ${q.title}. COME BACK WHEN IT'S DONE!`, plan: null };
+  else { const plan = exPlanQuest(npc); ex.talk = { npc, text: plan.text, plan }; }
+  ex.menu = "talk";
+}
+function exTalkYes() {
+  if (ex.talk && ex.talk.plan) exStartQuest(ex.talk.plan);
+  ex.menu = null;
+}
+const exShopLevel = it => (it.gear ? exSave.gear[it.id] : exSave.packed[it.id]);
+function exBuy(i) {
+  const it = EX_SHOP[i], lv = exShopLevel(it);
+  if (lv >= it.max) { exSay(it.gear ? "THAT'S MAXED OUT!" : "YOU HAVE AS MANY AS YOU CAN CARRY", "#ffd447"); return; }
+  const cost = it.cost(lv);
+  if (exSave.coins < cost) { exSay(`YOU NEED ${cost - exSave.coins} MORE COINS`, "#ff8a7a"); return; }
+  exSave.coins -= cost;
+  if (it.gear) exSave.gear[it.id]++;
+  else exSave.packed[it.id]++;
+  if (it.id === "hearts") ex.hearts++;
+  exSay(it.gear ? `${it.name} LEVEL ${lv + 1}!` : `${it.name} PACKED FOR YOUR NEXT CLIMB!`, "#7dff7a");
+  exSaveNow();
+}
+
+// The shop's climb power-ups kick in when your next climb starts.
+function usePackedItems() {
+  const pk = exSave.packed;
+  if (!pk.relic && !pk.jumps && !pk.shield) return;
+  for (let k = 0; k < pk.relic; k++) grantRelic();
+  if (pk.jumps) boosts = st.boostMax;
+  if (pk.shield) player.fxShield = Math.max(player.fxShield, pk.shield);
+  exSave.packed = { relic: 0, jumps: 0, shield: 0 };
+  exSaveNow();
+  floatText(player.x + PLAYER_W / 2, player.y + 90, "SHOP POWER-UPS READY!", "#ffd447");
+}
+
+function exploreKey(e) {
+  const c = e.code;
+  if (ex.menu === "talk") {
+    if (c === "Space" || c === "Enter" || c === "KeyY") exTalkYes();
+    else if (c === "Escape" || c === "KeyN" || c === "KeyP") ex.menu = null;
+  } else if (ex.menu === "shop") {
+    if (c === "ArrowUp" || c === "KeyW") ex.sel = (ex.sel + EX_SHOP.length - 1) % EX_SHOP.length;
+    else if (c === "ArrowDown" || c === "KeyS") ex.sel = (ex.sel + 1) % EX_SHOP.length;
+    else if (c === "Space" || c === "Enter") exBuy(ex.sel);
+    else if (c === "Escape" || c === "KeyP") ex.menu = null;
+  } else if (ex.menu === "pause") {
+    if (c === "Escape" || c === "KeyP" || c === "Enter" || c === "Space") ex.menu = null;
+    else if (c === "KeyG" && ex.quest) { exCleanQuest(); ex.menu = null; exSay("QUEST DROPPED", "#c8d3ff"); }
+    else if (c === "KeyX" || c === "KeyQ") exLeave();
+  } else if (ex.menu === "map") {
+    if (c === "KeyM" || c === "Escape" || c === "Enter" || c === "Space") ex.menu = null;
+  } else if (c === "Escape" || c === "KeyP") ex.menu = "pause";
+  else if (c === "KeyM") ex.menu = "map";
+  else if ((c === "Space" && !IS_TOUCH) || c === "Enter" || c === "KeyE") exTalk();
+}
+
+// ---------- Drawing the 3D world ----------
+const exImg = wctx.createImageData(EX_W, EX_H);
+exImg.data.fill(255);
+const exZ = new Float32Array(EX_W);                       // how far away the wall is in each column
+
+function drawExplore(t) {
+  const P = ex.p, buf = exImg.data, cx = ex.cam.x, cy = ex.cam.y;
+  const dX = Math.cos(P.a), dY = Math.sin(P.a), k = Math.tan(EX_FOV / 2), pX = -dY * k, pY = dX * k;
+  const sky = ex.sky.top, fog = ex.sky.fog;
+  for (let y = 0; y < EX_HORIZON; y++) {                  // sky
+    const f = y / EX_HORIZON;
+    const r = sky[0] + (fog[0] - sky[0]) * f, g = sky[1] + (fog[1] - sky[1]) * f, b = sky[2] + (fog[2] - sky[2]) * f;
+    for (let x = 0, i = y * EX_W * 4; x < EX_W; x++, i += 4) { buf[i] = r; buf[i + 1] = g; buf[i + 2] = b; }
+  }
+  for (let y = EX_HORIZON; y < EX_H; y++) {               // ground, fading into the mist far away
+    const dist = EX_CAMH * EX_PROJ / (y - EX_HORIZON + 0.5);
+    const f = Math.min(1, dist / EX_FAR), kf = 1 - f, fr = fog[0] * f, fg = fog[1] * f, fb = fog[2] * f;
+    let fx = cx + dist * (dX - pX), fy = cy + dist * (dY - pY);
+    const sx = dist * 2 * pX / EX_W, sy = dist * 2 * pY / EX_W;
+    for (let x = 0, i = y * EX_W * 4; x < EX_W; x++, i += 4, fx += sx, fy += sy) {
+      const mx = Math.floor(fx), my = Math.floor(fy);
+      const tex = exFloorTex[mx >= 0 && my >= 0 && mx < EXN && my < EXN ? exZones[my * EXN + mx] : 0];
+      const ti = ((((fy - my) * 16) | 0) * 16 + (((fx - mx) * 16) | 0)) * 3;
+      buf[i] = tex[ti] * kf + fr; buf[i + 1] = tex[ti + 1] * kf + fg; buf[i + 2] = tex[ti + 2] * kf + fb;
+    }
+  }
+  for (let x = 0; x < EX_W; x++) {                        // walls: one ray per column
+    const camX = 2 * x / EX_W - 1, rdx = dX + pX * camX, rdy = dY + pY * camX;
+    let mx = Math.floor(cx), my = Math.floor(cy), side = 0;
+    const ddx = Math.abs(1 / rdx), ddy = Math.abs(1 / rdy), stepX = rdx < 0 ? -1 : 1, stepY = rdy < 0 ? -1 : 1;
+    let sdx = rdx < 0 ? (cx - mx) * ddx : (mx + 1 - cx) * ddx;
+    let sdy = rdy < 0 ? (cy - my) * ddy : (my + 1 - cy) * ddy;
+    for (let n = 0; n < 100; n++) {
+      if (sdx < sdy) { sdx += ddx; mx += stepX; side = 0; } else { sdy += ddy; my += stepY; side = 1; }
+      if (mx < 0 || my < 0 || mx >= EXN || my >= EXN || exMap[my * EXN + mx]) break;
+    }
+    const perp = Math.max(0.05, side === 0 ? sdx - ddx : sdy - ddy);
+    exZ[x] = perp;
+    const lineH = EX_PROJ / perp, top = EX_HORIZON - (EX_WALLH - EX_CAMH) * lineH, bot = EX_HORIZON + EX_CAMH * lineH;
+    let wx = side === 0 ? cy + perp * rdy : cx + perp * rdx;
+    wx -= Math.floor(wx);
+    let tx = (wx * 16) | 0;
+    if ((side === 0 && rdx > 0) || (side === 1 && rdy < 0)) tx = 15 - tx;
+    const tex = exWallTex[mx >= 0 && my >= 0 && mx < EXN && my < EXN ? exZones[my * EXN + mx] : 0];
+    const f = Math.min(1, perp / EX_FAR), kf = (1 - f) * (side ? 0.72 : 1), fr = fog[0] * f, fg = fog[1] * f, fb = fog[2] * f;
+    const y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(EX_H, Math.ceil(bot)), step = 16 / (bot - top);
+    let ty = (y0 - top) * step;
+    for (let y = y0, i = (y0 * EX_W + x) * 4; y < y1; y++, i += EX_W * 4, ty += step) {
+      const ti = ((Math.min(15, ty | 0)) * 16 + tx) * 3;
+      buf[i] = tex[ti] * kf + fr; buf[i + 1] = tex[ti + 1] * kf + fg; buf[i + 2] = tex[ti + 2] * kf + fb;
+    }
+  }
+  wctx.putImageData(exImg, 0, 0);
+  exDrawSprites(t, dX, dY);
+  if (ex.hurt > 0.8) { ctx.fillStyle = "rgba(255,40,40,0.25)"; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
+}
+
+// Everything that isn't a wall is a flat picture standing in the world ("sprite").
+// They're drawn farthest first, and hidden behind walls column by column.
+function exDrawSprites(t, dX, dY) {
+  const uX = -dY, uY = dX, list = [];
+  const add = (x, y, hw, draw, opts = {}) => {
+    const rx = x - ex.cam.x, ry = y - ex.cam.y, depth = rx * dX + ry * dY;
+    if (depth < 0.2 || depth > EX_FAR) return;
+    const unit = EX_PROJ * PIXEL / depth;
+    list.push({ depth, hw, draw, ...opts, sx: (EX_W / 2 + (rx * uX + ry * uY) / depth * EX_PROJ) * PIXEL,
+                gy: (EX_HORIZON + EX_CAMH * EX_PROJ / depth) * PIXEL, unit });
+  };
+  const q = ex.quest;
+  for (const c of ex.coins) add(c.x, c.y, 0.25, () => exDrawCoin(t + c.ph));
+  for (const g of ex.items) add(g.x, g.y, 0.3, () => exDrawGem(t + g.ph));
+  for (const e of ex.enemies) add(e.x, e.y, 0.45, () => exDrawGremlin(e, t));
+  for (const s of ex.shots) add(s.x, s.y, 0.15, exDrawShot, { noShadow: true });
+  ex.rings.forEach((r, i) => {
+    if (i >= ex.ringI && i <= ex.ringI + 1) add(r.x, r.y, 0.5, () => exDrawRing(t, i === ex.ringI), { noShadow: true });
+  });
+  if (ex.puppy) add(ex.puppy.x, ex.puppy.y, 0.35, () => exDrawPuppy(t, ex.puppy.follow),
+                    { label: ex.puppy.follow ? "" : "WOOF!", labelH: 0.6, labelColor: "#ffd447" });
+  for (const n of EX_NPCS) {
+    const offer = !q, mine = q && (q.npc === n.id || q.target === n.id);
+    add(n.at[0], n.at[1], 0.45, s => exDrawNpc(n, s), {
+      label: `${offer ? "! " : mine ? "? " : ""}${n.name}`, labelH: 1.25, labelColor: offer || mine ? "#ffd447" : n.color,
+      farLabel: offer || mine,
+    });
+  }
+  add(EX_SHOP_SPOT.at[0], EX_SHOP_SPOT.at[1], 0.95, exDrawShop, { label: "BOLT'S SHOP", labelH: 2.3, labelColor: "#5ad1ff", farLabel: true });
+  add(ex.dog.x, ex.dog.y, 0.3, s => drawDogAt(0, -30 + Math.sin(t * 3) * 2, s.sx < VIEW_W / 2 ? 1 : -1, 0.7, t));
+  add(ex.p.x, ex.p.y, 0.5, () => exDrawPlayerBack(t), { noClip: true });
+  list.sort((a, b) => b.depth - a.depth);
+
+  for (const s of list) {
+    ctx.save();
+    if (!s.noClip) {                                      // only the columns where it's nearer than the wall
+      const half = s.hw * s.unit / PIXEL, c0 = Math.max(0, Math.floor(s.sx / PIXEL - half)), c1 = Math.min(EX_W - 1, Math.ceil(s.sx / PIXEL + half));
+      ctx.beginPath();
+      let start = -1, any = false;
+      for (let c = c0; c <= c1 + 1; c++) {
+        const vis = c <= c1 && exZ[c] > s.depth;
+        if (vis && start < 0) start = c;
+        if (!vis && start >= 0) { ctx.rect(start * PIXEL, 0, (c - start) * PIXEL, VIEW_H); any = true; start = -1; }
+      }
+      if (!any) { ctx.restore(); continue; }
+      ctx.clip();
+    }
+    ctx.globalAlpha = clamp((EX_FAR - s.depth) / 4, 0, 1);
+    ctx.translate(s.sx, s.gy);
+    const sc = s.unit / 40;                               // 40 drawing units = 1 step in the world
+    ctx.scale(sc, sc);
+    if (!s.noShadow) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.beginPath(); ctx.ellipse(0, 0, s.hw * 32, 5, 0, 0, Math.PI * 2); ctx.fill(); }
+    s.draw(s);
+    ctx.restore();
+    if (s.label && (s.depth < 7 || s.farLabel) && exZ[clamp(Math.round(s.sx / PIXEL), 0, EX_W - 1)] > s.depth) {
+      txt(s.label, s.sx, s.gy - s.labelH * s.unit - 12, s.depth < 4 ? 9 : 7, s.labelColor, "center");
+    }
+  }
+}
+
+function exDrawPlayerBack(t) {                            // your astronaut, seen from behind
+  const c = currentChar(), suit = PALETTE[c.suit], dark = mixHex(suit, [0, 0, 0], 0.3);
+  const walk = ex.moving ? Math.sin(ex.t * 11) * 2.5 : 0;
+  if (ex.hurt > 0 && Math.floor(t * 12) % 2 === 0) ctx.globalAlpha *= 0.45;
+  ctx.scale(0.72, 0.72);
+  ctx.fillStyle = dark;
+  rr(-8, -10 + Math.max(0, walk), 6, 10, 2); ctx.fill();
+  rr(2, -10 + Math.max(0, -walk), 6, 10, 2); ctx.fill();
+  rr(-15, -24 - walk * 0.4, 6, 13, 3); ctx.fill();
+  rr(9, -24 + walk * 0.4, 6, 13, 3); ctx.fill();
+  ctx.fillStyle = suit;
+  ctx.strokeStyle = mixHex(suit, [0, 0, 0], 0.4);
+  ctx.lineWidth = 1.5;
+  rr(-11, -26, 22, 18, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = PALETTE[c.pack];
+  rr(-8, -25, 16, 14, 3); ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.fillRect(-5, -21, 10, 2);
+  ctx.fillRect(-5, -17, 10, 2);
+  ctx.fillStyle = suit;
+  ctx.beginPath(); ctx.arc(0, -32, 10.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.beginPath(); ctx.arc(-3.5, -35, 3.5, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(0, -4);
+  drawHat(c);
+}
+function exDrawNpc(n, s) {
+  ctx.scale(s.sx < VIEW_W / 2 ? 0.72 : -0.72, 0.72);      // they turn to look at you
+  drawAstronaut(n.char, false, 0);
+}
+function exDrawCoin(t) {
+  const y = -16 + Math.sin(t * 3) * 3, w = Math.max(1.5, 8 * Math.abs(Math.cos(t * 4)));
+  ctx.fillStyle = "#ffd447"; ctx.strokeStyle = "#c98a00"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(0, y, w, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#fff3b0"; ctx.fillRect(-w * 0.3, y - 4, Math.max(1, w * 0.3), 8);
+}
+function exDrawGem(t) {
+  const y = -22 + Math.sin(t * 2.5) * 3;
+  ctx.fillStyle = "#8fe3ff";
+  ctx.beginPath(); ctx.moveTo(0, y - 11); ctx.lineTo(8, y - 2); ctx.lineTo(0, y + 11); ctx.lineTo(-8, y - 2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#e6f9ff";
+  ctx.beginPath(); ctx.moveTo(0, y - 11); ctx.lineTo(3, y - 2); ctx.lineTo(0, y + 4); ctx.lineTo(-3, y - 2); ctx.closePath(); ctx.fill();
+  if (Math.sin(t * 5) > 0.7) drawStar(9, y - 10, 4, "#ffffff");
+}
+function exDrawGremlin(e, t) {
+  const bob = Math.abs(Math.sin(t * 8 + e.ph)) * 3, col = e.flash > 0 ? "#ffffff" : e.quest ? "#ff7a3a" : EX_ZONES[e.zone].grem;
+  const dark = "#1b1b22";
+  ctx.fillStyle = dark;
+  ctx.fillRect(-7, -6, 4, 6); ctx.fillRect(3, -6, 4, 6);
+  for (const s of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(s * 7, -23 - bob); ctx.lineTo(s * 11, -33 - bob); ctx.lineTo(s * 2, -25 - bob); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.ellipse(0, -15 - bob, 12, 11, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.ellipse(-4.5, -18 - bob, 3.5, 4, 0, 0, Math.PI * 2); ctx.ellipse(4.5, -18 - bob, 3.5, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.arc(-4, -17 - bob, 1.8, 0, Math.PI * 2); ctx.arc(5, -17 - bob, 1.8, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = dark; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, -11 - bob, 4, 0.2, Math.PI - 0.2); ctx.stroke();
+  if (e.hp < e.max) {
+    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(-12, -42, 24, 4);
+    ctx.fillStyle = "#7dff7a"; ctx.fillRect(-12, -42, 24 * e.hp / e.max, 4);
+  }
+}
+function exDrawShot() {
+  ctx.fillStyle = "rgba(143,227,255,0.35)";
+  ctx.beginPath(); ctx.arc(0, -14, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#e6f9ff";
+  ctx.beginPath(); ctx.arc(0, -14, 4, 0, Math.PI * 2); ctx.fill();
+}
+function exDrawRing(t, next) {
+  ctx.globalAlpha *= next ? 1 : 0.35;
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = `hsl(${(t * 120) % 360},90%,65%)`;
+  ctx.beginPath(); ctx.ellipse(0, -26, 16, 24, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.lineWidth = 2; ctx.strokeStyle = "#ffffff";
+  ctx.beginPath(); ctx.ellipse(0, -26, 12, 19, 0, 0, Math.PI * 2); ctx.stroke();
+}
+function exDrawPuppy(t, happy) {
+  const wag = Math.sin(t * (happy ? 20 : 6)) * 0.6, hop = happy ? Math.abs(Math.sin(t * 9)) * 2 : 0;
+  ctx.translate(0, -hop);
+  ctx.fillStyle = "#8b5a2b";
+  for (const lx of [-7, -3, 3, 7]) ctx.fillRect(lx, -5, 2.5, 5);
+  ctx.save(); ctx.translate(-9, -10); ctx.rotate(-0.8 + wag);
+  ctx.fillRect(-1, -8, 2.5, 8); ctx.restore();
+  ctx.fillStyle = "#c98b4f";
+  ctx.beginPath(); ctx.ellipse(0, -9, 10, 6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9, -16, 6, 5.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#8b5a2b";
+  ctx.beginPath(); ctx.ellipse(6, -15, 2.5, 5, 0.3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#1b1b22";
+  ctx.beginPath(); ctx.arc(11, -17, 1.4, 0, Math.PI * 2); ctx.arc(15, -15, 1.6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ff5a5a"; ctx.fillRect(4, -12, 7, 2);           // collar
+}
+function exDrawShop() {
+  const stripe = ["#ff5a5a", "#ffffff"];
+  ctx.fillStyle = "#59617a";
+  ctx.fillRect(-32, -66, 4, 40); ctx.fillRect(28, -66, 4, 40);
+  ctx.fillStyle = "#9aa3b8";                                       // Bolt the robot shopkeeper
+  rr(-9, -50, 18, 15, 4); ctx.fill();
+  ctx.fillStyle = "#5ad1ff"; ctx.fillRect(-6, -45, 4, 4); ctx.fillRect(2, -45, 4, 4);
+  ctx.strokeStyle = "#59617a"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, -50); ctx.lineTo(0, -56); ctx.stroke();
+  ctx.fillStyle = "#ffd447"; ctx.beginPath(); ctx.arc(0, -57, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#8a5a35"; rr(-32, -28, 64, 28, 3); ctx.fill();
+  ctx.fillStyle = "#b07a4a"; ctx.fillRect(-35, -31, 70, 5);
+  ctx.fillStyle = "#ffd447"; ctx.beginPath(); ctx.arc(0, -14, 6, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < 8; i++) { ctx.fillStyle = stripe[i % 2]; ctx.fillRect(-36 + i * 9, -76, 9, 11); }
+  for (let i = 0; i < 8; i++) { ctx.fillStyle = stripe[i % 2]; ctx.beginPath(); ctx.arc(-31.5 + i * 9, -65, 4.5, 0, Math.PI); ctx.fill(); }
+}
+
+// ---------- The explore HUD, map and menus (drawn sharp, on top) ----------
+const exMini = document.createElement("canvas");
+exMini.width = exMini.height = EXN;
+function exUpdateMini() {
+  if (!ex.mapDirty) return;
+  ex.mapDirty = false;
+  const mc = exMini.getContext("2d"), img = mc.createImageData(EXN, EXN), d = img.data;
+  for (let i = 0; i < EXN * EXN; i++) {
+    const col = EX_ZONES[EX_ZONE_IDS[exZones[i]]].map, k = exMap[i] ? 0.4 : 0.9;
+    d[i * 4] = col[0] * k; d[i * 4 + 1] = col[1] * k; d[i * 4 + 2] = col[2] * k;
+    d[i * 4 + 3] = ex.explored[i] ? 255 : 0;
+  }
+  mc.putImageData(img, 0, 0);
+}
+function exDrawMapAt(x, y, size, t) {
+  exUpdateMini();
+  const s = size / EXN, P = ex.p;
+  ctx.fillStyle = "rgba(6,8,20,0.85)";
+  ctx.fillRect(x, y, size, size);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(exMini, x, y, size, size);
+  ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, size, size);
+  const dot = (wx, wy, r, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x + wx * s, y + wy * s, r, 0, Math.PI * 2); ctx.fill(); };
+  for (const n of EX_NPCS) dot(n.at[0], n.at[1], Math.max(2.5, s * 0.7), n.color);
+  dot(EX_SHOP_SPOT.at[0], EX_SHOP_SPOT.at[1], Math.max(2.5, s * 0.7), "#5ad1ff");
+  const tg = exTarget();
+  if (tg && Math.floor(t * 4) % 2) dot(tg.x, tg.y, Math.max(3, s * 0.8), "#ff5a5a");
+  const px = x + P.x * s, py = y + P.y * s, r = Math.max(4, s * 1.2);
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(px + Math.cos(P.a) * r, py + Math.sin(P.a) * r);
+  ctx.lineTo(px + Math.cos(P.a + 2.5) * r * 0.8, py + Math.sin(P.a + 2.5) * r * 0.8);
+  ctx.lineTo(px + Math.cos(P.a - 2.5) * r * 0.8, py + Math.sin(P.a - 2.5) * r * 0.8);
+  ctx.closePath(); ctx.fill();
+}
+function exHeart(x, y, s, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 0.9);
+  ctx.bezierCurveTo(x - s * 1.3, y, x - s * 0.6, y - s * 0.9, x, y - s * 0.25);
+  ctx.bezierCurveTo(x + s * 0.6, y - s * 0.9, x + s * 1.3, y, x, y + s * 0.9);
+  ctx.fill();
+}
+function exCoinIcon(x, y, r) {
+  ctx.fillStyle = "#ffd447"; ctx.strokeStyle = "#c98a00"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+}
+
+function drawExploreHUD(t) {
+  const cx = VIEW_W / 2, P = ex.p;
+  // Coins and hearts
+  ctx.fillStyle = "rgba(0,0,0,0.45)"; rr(8, 8, 172, 54, 8); ctx.fill();
+  exCoinIcon(24, 24, 8);
+  txt(String(exSave.coins), 40, 17, 12, "#ffd447");
+  const maxH = 3 + exSave.gear.hearts;
+  for (let i = 0; i < maxH; i++) exHeart(22 + i * 22, 46, 8, i < ex.hearts ? "#ff5a6e" : "rgba(255,255,255,0.2)");
+  // Map in the corner (click or tap it for the big map)
+  exDrawMapAt(VIEW_W - 108, 8, 100, t);
+  if (USE_BUTTONS() && !ex.menu) uiButton("", VIEW_W - 108, 8, 100, 100, () => { ex.menu = "map"; }, "", 0, false);
+  if (USE_BUTTONS() && !IS_TOUCH && !ex.menu) uiButton("MENU", VIEW_W - 108, 114, 100, 26, () => { ex.menu = "pause"; }, "#c8d3ff", 8);
+  // The quest, and an arrow that points the way
+  const q = ex.quest;
+  if (q) {
+    ctx.fillStyle = "rgba(0,0,0,0.45)"; rr(8, 68, 260, 40, 8); ctx.fill();
+    txt(q.title, 16, 74, 8, "#ffd447");
+    txt(exProgress(), 16, 90, 7, "#ffffff");
+    const tg = exTarget();
+    if (tg) {
+      const ang = Math.atan2(tg.y - P.y, tg.x - P.x) - P.a, dist = Math.hypot(tg.x - P.x, tg.y - P.y);
+      ctx.save();
+      ctx.translate(cx, 150);
+      ctx.rotate(ang + Math.PI / 2);
+      ctx.fillStyle = "#ffd447"; ctx.strokeStyle = "#7a5a00"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(13, 4); ctx.lineTo(5, 2); ctx.lineTo(5, 14); ctx.lineTo(-5, 14); ctx.lineTo(-5, 2); ctx.lineTo(-13, 4);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+      txt(`${Math.round(dist * 2)} m`, cx, 172, 8, "#ffffff", "center");
+    }
+  } else if (!ex.menu) {
+    txt("FIND SOMEONE WITH A ! FOR A QUEST", 12, 72, 7, "rgba(255,255,255,0.75)");
+  }
+  if (ex.zoneFlash > 0) {
+    ctx.globalAlpha = Math.min(1, ex.zoneFlash);
+    txt(EX_ZONES[ex.zone].name, cx, 210, 16, EX_ZONES[ex.zone].color, "center");
+    ctx.globalAlpha = 1;
+  }
+  if (ex.msgT > 0) {
+    ctx.globalAlpha = Math.min(1, ex.msgT * 2);
+    for (const [i, line] of wrapLines(ex.msg, VIEW_W - 60, 10).entries()) txt(line, cx, 250 + i * 16, 10, ex.msgColor, "center");
+    ctx.globalAlpha = 1;
+  }
+  if (ex.near && !ex.menu) {
+    const label = ex.near.id === "shop" ? "OPEN THE SHOP" : `TALK TO ${ex.near.name}`;
+    if (USE_BUTTONS()) uiButton(label, cx - 120, 596, 240, 40, exTalk, "#ffd447", 9);
+    else txt(`SPACE = ${label}`, cx, 610, 10, "#ffd447", "center");
+  }
+  if (!IS_TOUCH && !ex.menu) {
+    txt(mouseMode ? "HOLD LEFT CLICK = WALK   RIGHT CLICK = SHOOT" : "ARROWS / WASD = MOVE   F = SHOOT   M = MAP   ESC = MENU",
+        cx, VIEW_H - 20, 7, "rgba(255,255,255,0.75)", "center");
+  }
+  if (ex.menu === "talk") exDrawTalk();
+  else if (ex.menu === "shop") exDrawShopMenu(t);
+  else if (ex.menu === "pause") exDrawPause();
+  else if (ex.menu === "map") {
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    txt("MAP", cx, 96, 16, "#ffffff", "center");
+    exDrawMapAt(24, 130, 432, t);
+    txt("YELLOW/COLOR DOTS = PEOPLE   BLUE = SHOP   RED = YOUR QUEST", cx, 574, 7, "#c8d3ff", "center");
+    txt(USE_BUTTONS() ? `${TAP()} TO CLOSE` : "M = CLOSE", cx, 600, 9, "#ffffff", "center");
+    if (USE_BUTTONS()) uiButton("", 0, 0, VIEW_W, VIEW_H, () => { ex.menu = null; }, "", 0, false);
+  }
+}
+
+function exDrawTalk() {
+  const cx = VIEW_W / 2, T = ex.talk;
+  panel(30, 380, VIEW_W - 60, 236);
+  txt(T.npc.name, cx, 396, 12, T.npc.color, "center");
+  wrapLines(T.text, VIEW_W - 100, 9).forEach((line, i) => txt(line, cx, 424 + i * 16, 9, "#ffffff", "center"));
+  if (T.plan) {
+    exCoinIcon(cx - 70, 528, 7);
+    txt(`REWARD: ${T.plan.reward} COINS`, cx - 58, 523, 9, "#ffd447");
+    if (USE_BUTTONS()) {
+      uiButton("YES!", cx - 150, 560, 140, 38, exTalkYes, "#7dff7a", 11);
+      uiButton("NOT NOW", cx + 10, 560, 140, 38, () => { ex.menu = null; }, "#c8d3ff", 9);
+    } else txt("SPACE = YES!   ESC = NOT NOW", cx, 572, 9, "#c8d3ff", "center");
+  } else if (USE_BUTTONS()) uiButton("OK", cx - 70, 560, 140, 38, () => { ex.menu = null; }, "#7dff7a", 11);
+  else txt("SPACE = OK", cx, 572, 9, "#c8d3ff", "center");
+}
+
+function exDrawShopMenu(t) {
+  const cx = VIEW_W / 2;
+  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  panel(20, 70, VIEW_W - 40, 590);
+  txt("BOLT'S SHOP", cx, 86, 16, "#5ad1ff", "center");
+  exCoinIcon(cx - 40, 120, 7);
+  txt(`${exSave.coins} COINS`, cx - 28, 115, 9, "#ffd447");
+  txt("GEAR FOR EXPLORING", 40, 140, 8, "#7dff7a");
+  EX_SHOP.forEach((it, i) => {
+    const y = 156 + i * 52 + (i >= 4 ? 26 : 0), sel = i === ex.sel, lv = exShopLevel(it), maxed = lv >= it.max;
+    if (i === 4) txt("POWER-UPS FOR YOUR NEXT CLIMB", 40, y - 18, 8, "#ffb347");
+    ctx.fillStyle = sel ? "rgba(90,209,255,0.18)" : "rgba(255,255,255,0.05)";
+    rr(34, y, VIEW_W - 68, 46, 8); ctx.fill();
+    if (sel) { ctx.strokeStyle = "#5ad1ff"; ctx.lineWidth = 2; ctx.stroke(); }
+    txt(it.name, 46, y + 8, 9, "#ffffff");
+    txt(it.desc, 46, y + 26, 6, "#c8d3ff");
+    const have = it.gear ? `LV ${lv}/${it.max}` : lv ? `PACKED ${lv}` : "";
+    if (have) txt(have, VIEW_W - 48, y + 26, 7, "#7dff7a", "right");
+    const cost = it.cost(lv);
+    txt(maxed ? (it.gear ? "MAX" : "FULL") : `${cost}`, VIEW_W - 48, y + 8, 9, maxed ? "#7dff7a" : exSave.coins >= cost ? "#ffd447" : "#ff8a7a", "right");
+    if (USE_BUTTONS()) uiButton("", 34, y, VIEW_W - 68, 46, () => {
+      if (ex.shopArm === i) exBuy(i); else { ex.sel = i; ex.shopArm = i; }
+    }, "", 0, false);
+  });
+  if (ex.msgT > 0) txt(ex.msg, cx, 594, 8, ex.msgColor, "center");
+  if (USE_BUTTONS()) {
+    txt(`${TAP()} AN ITEM, THEN ${TAP()} IT AGAIN TO BUY`, cx, 612, 7, "#c8d3ff", "center");
+    uiButton("DONE", cx - 70, 622, 140, 30, () => { ex.menu = null; }, "#5ad1ff", 10);
+  } else txt("UP / DOWN = CHOOSE   SPACE = BUY   ESC = DONE", cx, 630, 8, "#c8d3ff", "center");
+}
+
+function exDrawPause() {
+  const cx = VIEW_W / 2;
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  txt("PAUSED", cx, 170, 24, "#ffffff", "center");
+  const g = exSave.gear, pk = exSave.packed;
+  txt(`GEAR: SPEED ${g.speed}  MAGNET ${g.magnet}  BLASTER ${g.blaster}  HEARTS +${g.hearts}`, cx, 226, 7, "#7dff7a", "center");
+  const packed = [pk.relic ? `${pk.relic} MYSTERY` : "", pk.jumps ? "SUPER JUMPS" : "", pk.shield ? `SHIELD x${pk.shield}` : ""].filter(Boolean);
+  txt(packed.length ? `PACKED FOR YOUR CLIMB: ${packed.join(", ")}` : "NOTHING PACKED FOR YOUR CLIMB YET", cx, 246, 7, "#ffb347", "center");
+  if (USE_BUTTONS()) {
+    uiButton("KEEP EXPLORING", cx - 120, 300, 240, 40, () => { ex.menu = null; }, "#7dff7a", 10);
+    if (ex.quest) uiButton("GIVE UP THIS QUEST", cx - 120, 352, 240, 34, () => { exCleanQuest(); ex.menu = null; exSay("QUEST DROPPED", "#c8d3ff"); }, "#ff8a7a", 8);
+    uiButton("BACK TO TITLE", cx - 120, 398, 240, 34, exLeave, "#c8d3ff", 9);
+  } else {
+    txt("ESC = KEEP EXPLORING", cx, 310, 10, "#7dff7a", "center");
+    if (ex.quest) txt("G = GIVE UP THIS QUEST", cx, 340, 10, "#ff8a7a", "center");
+    txt("X = BACK TO TITLE", cx, 370, 10, "#c8d3ff", "center");
+  }
+  txt("YOUR COINS AND GEAR ARE SAVED", cx, 460, 8, "#c8d3ff", "center");
+}
+
+// =====================================================================
 //  ON-SCREEN BUTTONS for touch screens (Round 9)
 //  "Hold" buttons act like holding a key; "tap" buttons act like pressing one.
 // =====================================================================
 const pad = document.getElementById("pad"), pauseBtn = document.getElementById("pauseBtn");
 const padExtras = document.getElementById("padExtras");
+const jumpBtn = pad.querySelector('[data-hold="Space"]');
 
 function bindPadButton(b) {
   const code = b.dataset.hold, tap = b.dataset.tap;
@@ -5575,9 +6576,11 @@ document.querySelectorAll("#pad .pb, #pauseBtn").forEach(bindPadButton);
 // Ability buttons only show up once you have that upgrade.
 let padExtrasKey = "";
 function updatePad() {
-  const show = IS_TOUCH && (state === "playing" || state === "minigame");
+  const show = IS_TOUCH && (state === "playing" || state === "minigame" || state === "explore");
   pad.classList.toggle("hidden", !show);
-  pauseBtn.classList.toggle("hidden", !(IS_TOUCH && state === "playing"));
+  pauseBtn.classList.toggle("hidden", !(IS_TOUCH && (state === "playing" || state === "explore")));
+  const goLabel = state === "explore" ? "GO" : "JUMP";             // in the 3D world the big button walks
+  if (jumpBtn.textContent !== goLabel) jumpBtn.textContent = goLabel;
   if (!show) return;
   const extras = [[st.dive, "DIVE", "ArrowDown"], [st.dash, "DASH", "ShiftLeft"], [st.timeBubble, "SLOW", "KeyQ"],
                   [st.blink, "BLINK", "KeyE"], [st.cloud, "CLOUD", "KeyC"]].filter(x => x[0]);
