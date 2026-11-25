@@ -794,7 +794,9 @@ function touchesGoal() {
 //  Started with "Play Moon Hop", scores are saved in scores.json in the
 //  game folder (so they survive every new build). This browser keeps a copy too.
 // =====================================================================
-const SERVED = location.protocol === "http:" || location.protocol === "https:";
+// Only the home launcher (Play Moon Hop) has a save-file server; on the website, scores live in the browser.
+const SERVED = location.protocol === "http:" && (location.hostname === "localhost" || location.hostname === "127.0.0.1");
+const ON_WEB = location.protocol === "https:";
 const compareScores = (a, b) => (b.height - a.height) || (a.time - b.time);
 
 function cleanScores(arr) {
@@ -3440,6 +3442,8 @@ function drawTitle(t) {
   txt("S = SANDBOX     C = CREDITS", cx, 534, 8, "#c8d3ff", "center");
   if (fileScoresOK) {
     txt("SCORES SAVE IN THE GAME FOLDER", cx, 566, 7, "#7dff7a", "center");
+  } else if (localOK && ON_WEB) {
+    txt("YOUR SCORES SAVE IN THIS BROWSER", cx, 566, 7, "#7dff7a", "center");
   } else if (localOK) {
     txt("SCORES SAVE IN THIS BROWSER ONLY", cx, 558, 7, "#c8d3ff", "center");
     txt("START 'Play Moon Hop' TO SAVE THEM FOR GOOD", cx, 572, 7, "#c8d3ff", "center");
