@@ -18,6 +18,8 @@
   /* Touch screens (Round 9): no zooming, scrolling, text selection or tap flashes */
   html, body, canvas { touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none;
                        -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  /* Fill the whole phone screen and never scroll (Round 10) */
+  html, body { position: fixed; inset: 0; width: 100%; height: 100%; height: 100dvh; -webkit-text-size-adjust: 100%; }
   #pad { position: fixed; inset: 0; pointer-events: none; font-family: "Press Start 2P", monospace; }
   #pad.hidden, #pauseBtn.hidden { display: none; }
   .pb { pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
@@ -27,9 +29,10 @@
   .pb.small { width: 62px; height: 42px; font-size: 8px; border-color: #c39bff; border-radius: 12px; }
   .pb.on { background: rgba(125,255,122,0.5); }
   #padLeft, #padRight, #padExtras { position: absolute; display: flex; gap: 8px; align-items: flex-end; }
-  #padLeft { left: 10px; bottom: 14px; }
-  #padExtras { left: 10px; bottom: 104px; flex-wrap: wrap; width: 200px; }
-  #padRight { right: 10px; bottom: 14px; flex-wrap: wrap; justify-content: flex-end; width: 184px; }
+  #padLeft { left: calc(10px + env(safe-area-inset-left)); bottom: calc(14px + env(safe-area-inset-bottom)); }
+  #padExtras { left: calc(10px + env(safe-area-inset-left)); bottom: calc(104px + env(safe-area-inset-bottom)); flex-wrap: wrap; width: 200px; }
+  #padRight { right: calc(10px + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom));
+              flex-wrap: wrap; justify-content: flex-end; width: 184px; }
   #pauseBtn { position: fixed; width: 40px; height: 40px; font-size: 10px; border-radius: 10px; }
 </style>
 </head>
@@ -54,7 +57,7 @@
 
 // =====================================================================
 //  MOON HOP - a family-built game
-//  Climb from the ground all the way up to the Moon.
+//  Climb from the bottom of the sea, past the Moon, Mars and the Sun, to the Black Hole.
 //  Every family round adds something new to this file.
 // =====================================================================
 
@@ -74,7 +77,7 @@ const CREDITS = [
 // ---------- Tuning ----------
 const VIEW_W = 480, VIEW_H = 720;     // the game screen (scaled to fit the window)
 const PX_PER_M = 20;                  // 20 pixels = 1 meter
-const MOON_METERS = 1500;             // how high the Moon is
+const MOON_METERS = 2000;             // the top of the climb (the black hole lives up here)
 const MOON_Y = MOON_METERS * PX_PER_M;
 const MOON_R = 190;
 const TOWER_SEED = 2026;              // same tower every game, so scores are fair
@@ -105,8 +108,9 @@ const CONFETTI_AT = 100 * PX_PER_M;   // confetti party when you reach 100 m
 const SPACE_Y = 1000 * PX_PER_M;      // outer space starts at 1000 m
 const SPACE_GRAVITY = 0.55;           // gravity in space (x normal) = floaty, high jumps
 const SPACE_MAX_FALL = 0.6;           // you fall slower in space too (x normal)
-const MOON_GRAVITY_Y = 1350 * PX_PER_M;   // the Moon section is even floatier (Round 7)
-const gravityAt = y => y >= MOON_GRAVITY_Y ? GRAVITY * 0.42 : y >= SPACE_Y ? GRAVITY * SPACE_GRAVITY : GRAVITY;
+// Each biome has its own gravity (see SECTIONS below): floaty in the water, light in space.
+const gravityAt = y => GRAVITY * SECTIONS[sectionAt(y / PX_PER_M)].gravity;
+const fallAt = y => SECTIONS[sectionAt(y / PX_PER_M)].fall;
 const CONFETTI_COLORS = ["#ff5a5a", "#ffd447", "#5ad1ff", "#7dff7a", "#d77dff", "#ff9f40", "#ffffff"];
 
 // ---------- The danger zone (Round 3) ----------
@@ -130,44 +134,56 @@ const CLOUD = { width: 80, life: 4, cooldown: 15 };
 const ENEMY_INFO = {                  // from/to = the heights (m) where each kind lives
   grumble: { hp: 2, r: 15, from: 40, to: 700, color: "120,115,160" },
   buzzer: { hp: 1, r: 11, from: 200, to: 1100, color: "242,208,70" },
-  swooper: { hp: 3, r: 13, from: 450, to: 1500, color: "80,105,210" },
-  jelly: { hp: 4, r: 16, from: 950, to: 1500, color: "255,140,200" },
+  swooper: { hp: 3, r: 13, from: 450, to: 2000, color: "80,105,210" },
+  jelly: { hp: 4, r: 16, from: 950, to: 2000, color: "255,140,200" },
   // These two fly in during their sections (Round 7), so they're never placed ahead of time.
   asteroid: { hp: 2, r: 13, from: Infinity, to: 0, color: "150,130,110" },
   flare: { hp: 1, r: 9, from: Infinity, to: 0, color: "255,150,60" },
   boss: { hp: 40, r: 34, from: Infinity, to: 0, color: "255,190,70" },
 };
 
-// ---------- Bosses (Round 8): one every 1000 m ----------
+// ---------- Bosses (Round 8, more in Round 10) ----------
 // Reach the rest ledge at that height and the boss blocks the way up until you beat it.
-// The tower tops out at 1500 m, so for now there's one. Add more here if it grows.
+// shots/shotGap/diveGap: [normal, angry] (angry = below half health). ammo is what it throws.
+// Beating the "final" boss wins the whole game.
 const BOSSES = [
-  { at: 1000, name: "THE SUN KING", hp: 25 },
+  { at: 500, name: "BOULDER BULLY", mini: true, kind: "golem", hp: 14, r: 28, ammo: "asteroid", speed: 180,
+    shots: [2, 3], shotGap: [2.2, 1.6], diveGap: [8, 6] },
+  { at: 1700, name: "THE SUN KING", kind: "sun", hp: 25, r: 34, ammo: "flare", speed: 210,
+    shots: [3, 5], shotGap: [1.6, 1.1], diveGap: [6, 4] },
+  { at: 1900, name: "THE BLACK HOLE", final: true, kind: "void", hp: 45, r: 40, ammo: "flare", speed: 230,
+    tint: "200,120,255", shots: [5, 7], shotGap: [1.5, 1.0], diveGap: [5, 3.5] },
 ];
 const ARENA_H = 560;                  // how tall the boss arena is (pixels above the ledge)
 
-// ---------- Sections (Round 7) ----------
-// Every section has its own sky, platforms, background and something new.
+// ---------- Biomes (Round 7 sections, redone in Round 10) ----------
+// From the bottom of the sea to the black hole. Each one has its own sky, platforms,
+// background, gravity (x normal), fall speed (x normal) and something new.
 const SECTIONS = [
-  { id: "meadow", name: "THE MEADOW", from: 0, to: 150, color: "#7dff7a", tip: "HOP TO THE MOON!",
-    sky: [[143, 211, 255], [120, 195, 250]], top: [112, 204, 84], body: [128, 88, 54] },
-  { id: "clouds", name: "CLOUD KINGDOM", from: 150, to: 300, color: "#ffffff", tip: "HOLD JUMP ON BOUNCY CLOUDS!",
-    sky: [[175, 190, 255], [200, 170, 240]], top: [255, 255, 255], body: [215, 222, 245] },
-  { id: "storm", name: "STORMY SKIES", from: 300, to: 450, color: "#ffd447", tip: "LIGHTNING! AND THE DANGER ZONE",
-    sky: [[80, 88, 120], [60, 66, 96]], top: [255, 214, 90], body: [70, 76, 96] },
-  { id: "windy", name: "WINDY HEIGHTS", from: 450, to: 600, color: "#c8f0ff", tip: "WATCH OUT FOR WIND GUSTS",
-    sky: [[100, 150, 205], [70, 110, 180]], top: [214, 224, 238], body: [124, 132, 156] },
-  { id: "aurora", name: "AURORA LIGHTS", from: 600, to: 800, color: "#78ffc8", tip: "SOME PLATFORMS BLINK OUT",
-    sky: [[24, 40, 80], [16, 24, 60]], top: [120, 255, 200], body: [50, 60, 110] },
-  { id: "satellite", name: "SATELLITE ORBIT", from: 800, to: 1000, color: "#a0c8ff", tip: "CRACKED SPACE JUNK CRUMBLES",
-    sky: [[10, 14, 44], [8, 10, 32]], top: [160, 200, 255], body: [110, 116, 130] },
-  { id: "sun", name: "THE SUN", from: 1000, to: 1150, color: "#ff9f40", tip: "SOLAR FLARES! LOW GRAVITY",
-    sky: [[70, 28, 18], [40, 16, 20]], top: [255, 200, 90], body: [170, 70, 40] },
-  { id: "asteroids", name: "ASTEROID BELT", from: 1150, to: 1350, color: "#d2b48c", tip: "DODGE OR BLAST THE ASTEROIDS",
-    sky: [[16, 12, 24], [12, 10, 20]], top: [190, 160, 130], body: [100, 80, 66] },
-  { id: "moon", name: "THE MOON", from: 1350, to: 1500, color: "#fff3b0", tip: "MOON GRAVITY: EXTRA FLOATY",
-    sky: [[10, 10, 20], [6, 6, 14]], top: [236, 234, 226], body: [128, 124, 116] },
+  { id: "water", name: "UNDER THE SEA", from: 0, to: 120, color: "#5ad1ff", tip: "WATER MAKES YOU FLOATY",
+    sky: [[20, 70, 140], [40, 120, 190]], top: [90, 210, 180], body: [60, 80, 120], gravity: 0.6, fall: 0.45 },
+  { id: "jungle", name: "THE JUNGLE", from: 120, to: 300, color: "#7dff7a", tip: "BOUNCY MUSHROOMS! HOLD JUMP",
+    sky: [[110, 190, 130], [140, 205, 175]], top: [100, 200, 60], body: [110, 75, 45], gravity: 1, fall: 1 },
+  { id: "mountains", name: "THE MOUNTAINS", from: 300, to: 520, color: "#d2c8b4", tip: "FALLING ROCKS! THE DANGER ZONE",
+    sky: [[140, 180, 225], [115, 155, 210]], top: [160, 155, 140], body: [100, 95, 90], gravity: 1, fall: 1 },
+  { id: "snowy", name: "SNOWY PEAKS", from: 520, to: 700, color: "#e6f4ff", tip: "ICY PLATFORMS ARE SLIPPERY",
+    sky: [[185, 205, 235], [150, 175, 220]], top: [235, 245, 255], body: [140, 160, 185], gravity: 1, fall: 1 },
+  { id: "sky", name: "THE SKY", from: 700, to: 850, color: "#ffffff", tip: "WATCH OUT FOR WIND GUSTS",
+    sky: [[100, 165, 245], [70, 125, 215]], top: [255, 255, 255], body: [200, 210, 235], gravity: 1, fall: 1 },
+  { id: "darksky", name: "UPPER ATMOSPHERE", from: 850, to: 1000, color: "#ffd447", tip: "LIGHTNING STORMS!",
+    sky: [[40, 40, 95], [18, 18, 58]], top: [255, 214, 90], body: [60, 62, 92], gravity: 1, fall: 1 },
+  { id: "space", name: "OUTER SPACE", from: 1000, to: 1200, color: "#a0c8ff", tip: "LOW GRAVITY! SPACE JUNK CRUMBLES",
+    sky: [[10, 12, 40], [8, 8, 30]], top: [160, 200, 255], body: [110, 116, 130], gravity: 0.55, fall: 0.6 },
+  { id: "moon", name: "THE MOON", from: 1200, to: 1400, color: "#fff3b0", tip: "MOON GRAVITY! PLATFORMS BLINK OUT",
+    sky: [[14, 14, 26], [10, 10, 20]], top: [236, 234, 226], body: [128, 124, 116], gravity: 0.42, fall: 0.55 },
+  { id: "mars", name: "MARS", from: 1400, to: 1600, color: "#ff8a5a", tip: "RED DUST STORMS!",
+    sky: [[120, 60, 40], [80, 36, 28]], top: [230, 120, 80], body: [140, 60, 40], gravity: 0.7, fall: 0.75 },
+  { id: "sun", name: "THE SUN", from: 1600, to: 1800, color: "#ff9f40", tip: "SOLAR FLARES! THE SUN KING!",
+    sky: [[70, 28, 18], [40, 16, 20]], top: [255, 200, 90], body: [170, 70, 40], gravity: 0.55, fall: 0.6 },
+  { id: "blackhole", name: "THE BLACK HOLE", from: 1800, to: 2000, color: "#c39bff", tip: "ASTEROIDS! THE FINAL BOSS AWAITS",
+    sky: [[24, 8, 36], [4, 0, 8]], top: [190, 120, 255], body: [50, 30, 70], gravity: 0.55, fall: 0.6 },
 ];
+const secIndex = id => SECTIONS.findIndex(s => s.id === id);
 const sectionAt = m => { for (let i = SECTIONS.length - 1; i > 0; i--) if (m >= SECTIONS[i].from) return i; return 0; };
 const BLINK_CYCLE = 3.4, BLINK_ON = 2.2;   // aurora platforms: solid 2.2 s, gone 1.2 s
 
@@ -425,9 +441,10 @@ function applySections() {
   for (const s of tower) {
     if (s.kind !== "step") continue;
     const sec = SECTIONS[sectionAt(s.y / PX_PER_M)].id, r = rnd();
-    if (sec === "clouds" && r < 0.35) s.bouncy = true;
-    else if (sec === "aurora" && r < 0.3 && !s.amp && !s.sweeper) { s.blink = true; s.blinkPh = rnd() * BLINK_CYCLE; }
-    else if (sec === "satellite" && r < 0.3 && !s.amp && !s.sweeper) s.crumble = true;
+    if (sec === "jungle" && r < 0.35) s.bouncy = true;                                   // bouncy mushrooms
+    else if (sec === "snowy" && r < 0.4 && !s.sweeper) s.icy = true;                     // slippery ice
+    else if (sec === "space" && r < 0.3 && !s.amp && !s.sweeper) s.crumble = true;       // crumbling space junk
+    else if (sec === "moon" && r < 0.3 && !s.amp && !s.sweeper) { s.blink = true; s.blinkPh = rnd() * BLINK_CYCLE; }
   }
 }
 applySections();
@@ -626,7 +643,7 @@ const stars = Array.from({ length: 140 }, () => ({
   d: 0.02 + deco() * 0.06, ph: deco() * 6.28, sp: 1 + deco() * 2,
 }));
 const clouds = [];
-for (let py = 160; py < 4800; py += 150 + deco() * 160) {
+for (let py = 160; py < 9200; py += 150 + deco() * 160) {
   clouds.push({ x: deco() * (VIEW_W + 160), py, s: 0.6 + deco() * 0.7, speed: 4 + deco() * 8 });
 }
 const craters = Array.from({ length: 9 }, () => {
@@ -642,18 +659,22 @@ const PLAT_BODY = SECTIONS.flatMap(s => [[s.from + 2, s.body], [s.to - 2, s.body
 // Scrolling backgrounds: each section has its own faraway things that slide by
 // slower than the platforms (BACK_P) and drift sideways.
 const BACK_P = 0.35;
-const BACKDROP_KINDS = { meadow: ["hill", 6], clouds: ["castle", 6], storm: ["thunderhead", 10], windy: ["island", 6],
-                         aurora: ["ribbon", 6], satellite: ["satellite", 8], sun: ["sun", 1], asteroids: ["rock", 16], moon: ["earth", 1] };
+const BACKDROP_KINDS = {
+  water: [["kelp", 9], ["fish", 10]], jungle: [["palm", 9]], mountains: [["peak", 8]], snowy: [["snowpeak", 8]],
+  sky: [["castle", 6], ["island", 4]], darksky: [["thunderhead", 8], ["ribbon", 4]], space: [["satellite", 8], ["earth", 1]],
+  moon: [["moonbig", 1], ["earth", 1]], mars: [["mars", 1], ["mesa", 7]], sun: [["sun", 1]], blackhole: [["rock", 16]],
+};
+const BIG_ONES = ["sun", "earth", "moonbig", "mars"];        // one big thing in the middle of the biome
 const backdrop = [];
 SECTIONS.forEach((sec, i) => {
-  const [kind, count] = BACKDROP_KINDS[sec.id];
-  const lo = (sec.from * PX_PER_M - 400) * BACK_P, hi = sec.to * PX_PER_M * BACK_P + VIEW_H;
-  for (let k = 0; k < count; k++) {
-    let py = lo + deco() * (hi - lo);
-    if (kind === "hill") py = 20 + k * 30;                       // hills sit along the horizon
-    if (kind === "sun" || kind === "earth") py = (lo + hi) / 2;
-    backdrop.push({ sec: i, kind, x: deco() * (VIEW_W + 200) - 100, py, s: 0.6 + deco() * 0.8,
-                    speed: (deco() - 0.5) * 16, ph: deco() * 6.28 });
+  for (const [kind, count] of BACKDROP_KINDS[sec.id]) {
+    const lo = (sec.from * PX_PER_M - 400) * BACK_P, hi = sec.to * PX_PER_M * BACK_P + VIEW_H;
+    for (let k = 0; k < count; k++) {
+      let py = lo + deco() * (hi - lo);
+      if (BIG_ONES.includes(kind)) py = (lo + hi) / 2 + (kind === "earth" && sec.id === "moon" ? 260 : 0);
+      backdrop.push({ sec: i, kind, x: deco() * (VIEW_W + 200) - 100, py, s: 0.6 + deco() * 0.8,
+                      speed: (deco() - 0.5) * (kind === "fish" ? 60 : 16), ph: deco() * 6.28 });
+    }
   }
 });
 
@@ -1299,6 +1320,15 @@ function handleChooseKey(e) {
   else if (c === "KeyR" && rerollsLeft() > 0) { player.rerollsUsed++; dealCards(); }
 }
 
+// Upgrade picks wait until you're standing still-safe: on solid ground that won't move,
+// crumble, blink, bounce or get swept, so nothing can knock you off when the game goes on.
+function onSafeGround() {
+  const p = player, s = p.standOn;
+  if (!p.onGround || !s || p.stun > 0) return false;
+  if (s.amp || s.crumble || s.blink || s.bouncy || s.sweeper || s.icy) return false;
+  return s.kind === "step" || s.kind === "ledge" || s.kind === "ground" || s.kind === "pad";
+}
+
 function onMilestone() {
   if (st.refillBoosts) boosts = st.boostMax;
   if (st.starPower) { player.invuln = Math.max(player.invuln, 5); player.starTime = 5; }
@@ -1359,7 +1389,7 @@ function updatePoppies(dt) {
     const q = petals[i];
     q.vx -= q.vx * drag;
     q.vy -= q.vy * drag;
-    q.vy -= 120 * (q.y >= SPACE_Y ? SPACE_GRAVITY : 1) * dt;
+    q.vy -= 120 * (gravityAt(q.y) / GRAVITY) * dt;
     q.x += (q.vx + Math.sin(q.age * 3 + q.ph) * 25) * dt;
     q.y += q.vy * dt;
     q.rot += q.spin * dt;
@@ -1425,13 +1455,15 @@ function spawnFlyer(type, x, y, vx, vy, warn = 0) {
     pvx: 0, pvy: 0, frozen: 0, burn: 0, burnTick: 0, flash: 0, moonCd: 0,
     ph: Math.random() * 6.28, spin: (Math.random() - 0.5) * 3,
   });
+  return enemies[enemies.length - 1];
 }
 
 function updateSections(dt) {
   const p = player, px = p.x + PLAYER_W / 2, ws = worldScale();
   const sec = SECTIONS[sectionAt(p.y / PX_PER_M)].id;
+  const calm = boss.phase !== "none" && boss.phase !== "won";   // no surprises during a boss fight
 
-  // Stormy Skies: a warning flicker, then a lightning bolt straight down
+  // Upper Atmosphere: a warning flicker, then a lightning bolt straight down
   if (storm.warn > 0) {
     storm.warn -= dt * ws;
     if (storm.warn <= 0) { storm.strike = 0.25; storm.hit = false; }
@@ -1441,7 +1473,7 @@ function updateSections(dt) {
       storm.hit = true;
       if (hitPlayer(px >= storm.x ? 1 : -1, 340, 280)) puff(px, p.y + 16, 12, 120, "255,240,120");
     }
-  } else if (sec === "storm") {
+  } else if (sec === "darksky") {
     storm.t -= dt * ws;
     if (storm.t <= 0) {
       storm.x = clamp(px + (Math.random() - 0.5) * 180, 20, VIEW_W - 20);
@@ -1458,25 +1490,28 @@ function updateSections(dt) {
     wind.timer -= dt;
     p.x = clamp(p.x + wind.dir * (p.onGround ? 70 : 140) * dt * ws, 0, VIEW_W - PLAYER_W);   // slides you along
     if (wind.timer <= 0) { wind.phase = "calm"; wind.t = 3 + Math.random() * 2.5; }
-  } else if (sec === "windy") {
+  } else if (sec === "sky" || sec === "mars") {             // wind in the sky, dust storms on Mars
     wind.t -= dt;
     if (wind.t <= 0) { wind.phase = "warn"; wind.timer = 1.1; wind.dir = Math.random() < 0.5 ? -1 : 1; }
   }
 
   // The Sun: solar flares shoot across from the right (with a warning first)
-  if (sec === "sun" && boss.phase === "none") {
+  if (sec === "sun" && !calm) {
     flareT -= dt * ws;
     if (flareT <= 0) {
       flareT = 2 + Math.random() * 1.3;
       spawnFlyer("flare", VIEW_W + 20, p.y + 16 + (Math.random() - 0.3) * 260, -240, 0, 0.8);
     }
   }
-  // Asteroid Belt: rocks drift down from above
-  if (sec === "asteroids") {
+  // The Black Hole: asteroids drift down. The Mountains: rocks tumble down faster.
+  if ((sec === "blackhole" || sec === "mountains") && !calm) {
     rockT -= dt * ws;
     if (rockT <= 0) {
-      rockT = 1.4 + Math.random() * 1.2;
-      spawnFlyer("asteroid", 30 + Math.random() * (VIEW_W - 60), camY + VIEW_H + 30, (Math.random() - 0.5) * 120, -(50 + Math.random() * 70));
+      const rocks = sec === "mountains";
+      rockT = (rocks ? 1.8 : 1.4) + Math.random() * 1.2;
+      const r = spawnFlyer("asteroid", 30 + Math.random() * (VIEW_W - 60), camY + VIEW_H + 30,
+                           (Math.random() - 0.5) * (rocks ? 60 : 120), -(rocks ? 110 + Math.random() * 70 : 50 + Math.random() * 70));
+      if (rocks) r.rock = true;
     }
   }
 }
@@ -1491,8 +1526,8 @@ function startBossFight() {
   }
   const e = {
     type: "boss", boss: true, hx: VIEW_W / 2, hy: boss.ceiling - 170, x: VIEW_W / 2, y: boss.ceiling + 150,
-    maxHp: def.hp, hp: def.hp, r: ENEMY_INFO.boss.r, alive: true, t: 0, pvx: 0, pvy: 0, frozen: 0,
-    burn: 0, burnTick: 0, flash: 0, moonCd: 0, ph: 0, mode: "hover", shootT: 2, diveT: 6,
+    maxHp: def.hp, hp: def.hp, r: def.r, kind: def.kind, alive: true, t: 0, pvx: 0, pvy: 0, frozen: 0,
+    burn: 0, burnTick: 0, flash: 0, moonCd: 0, ph: 0, mode: "hover", shootT: 2, diveT: def.diveGap[0],
   };
   enemies.push(e);
   boss.e = e;
@@ -1525,11 +1560,19 @@ function updateBoss(dt) {
     boosts = st.boostMax;
     p.invuln = Math.max(p.invuln, 4);
     p.starTime = 4;
-    pendingPicks++;                               // the prize: a free upgrade pick
-    boss.prize = true;
+    if (boss.def.final) boss.timer = 3;           // the final boss: you win the whole game!
+    else { pendingPicks++; boss.prize = true; }   // the prize: a free upgrade pick
   } else if (boss.phase === "won") {
     boss.timer -= dt;
-    if (boss.timer <= 0) boss.phase = "none";
+    if (boss.timer <= 0) {
+      if (boss.def.final) { endRun(true); return; }
+      boss.phase = "none";
+    }
+  }
+  // The Black Hole slowly pulls you toward it during the fight
+  if (boss.phase === "fight" && boss.def.kind === "void" && boss.e.alive) {
+    const pull = Math.sign(boss.e.x - (p.x + PLAYER_W / 2)) * 35 * dt * worldScale();
+    p.x = clamp(p.x + pull, 0, VIEW_W - PLAYER_W);
   }
   // The barrier: no climbing past the boss until it's beaten
   if (barrierUp() && p.y + PLAYER_H > boss.ceiling && p.y < boss.ceiling + 120) {
@@ -1618,6 +1661,7 @@ function doJump(kind, wallDir = 0) {
     p.airJumpsLeft--;
     v *= st.airJumpPower;
   } else {                                                   // wall kick
+    p.wallKicked = true;
     v *= 0.95;
     p.vx = wallDir * MAX_RUN * st.runSpeed;
     p.facing = wallDir;
@@ -1645,6 +1689,7 @@ function land(s, impact, wasGround) {
   p.dashReady = true;
   p.hoverLeft = st.hover;
   p.diving = false;
+  p.wallKicked = false;                                      // landing gives your Wall Kick back
   if (s.kind === "ledge" || s.kind === "ground") p.lastLedge = s;
   if (s.crumble && !(s.crumbleT > 0)) s.crumbleT = 0.6;              // space junk starts to crumble
   if (s.bouncy) {                                                    // bouncy cloud: boing! (hold jump to go high)
@@ -1680,11 +1725,13 @@ function updatePlayer(dt) {
     p.vx = dir * maxRun;
   } else if (dir !== 0) {
     p.facing = dir;
-    const accel = p.onGround ? RUN_ACCEL : AIR_ACCEL * st.airControl;
+    const onIce = p.onGround && p.standOn && p.standOn.icy;  // ice: slow to speed up, slides when you let go
+    const accel = p.onGround ? RUN_ACCEL * (onIce ? 0.3 : 1) : AIR_ACCEL * st.airControl;
     const turning = Math.sign(p.vx) === -dir;
     p.vx = clamp(p.vx + dir * accel * dt * (turning ? 1.6 : 1), -maxRun, maxRun);
   } else {
-    const slow = (p.onGround ? RUN_DECEL : AIR_DECEL) * dt;
+    const onIce = p.onGround && p.standOn && p.standOn.icy;
+    const slow = (p.onGround ? (onIce ? 220 : RUN_DECEL) : AIR_DECEL) * dt;
     p.vx = Math.abs(p.vx) <= slow ? 0 : p.vx - Math.sign(p.vx) * slow;
   }
 
@@ -1694,7 +1741,7 @@ function updatePlayer(dt) {
   const wall = p.x <= 0.5 ? -1 : (p.x >= VIEW_W - PLAYER_W - 0.5 ? 1 : 0);
   if (p.buffer > 0 && p.stun <= 0) {
     if (p.coyote > 0) doJump("ground");
-    else if (st.wallKick && wall !== 0) doJump("wall", -wall);
+    else if (st.wallKick && wall !== 0 && !p.wallKicked) doJump("wall", -wall);   // once until you land
     else if (p.airJumpsLeft > 0) doJump("air");
   }
   if (p.jumping && !held && p.vy > 0) { p.vy *= JUMP_CUT; p.jumping = false; }
@@ -1704,7 +1751,7 @@ function updatePlayer(dt) {
   if (p.dashTime > 0) {
     p.vy = 0;
   } else {
-    const maxFall = p.diving ? MAX_FALL * 1.6 : MAX_FALL * (inSpace ? SPACE_MAX_FALL : 1) * st.fallSpeed;
+    const maxFall = p.diving ? MAX_FALL * 1.6 : MAX_FALL * fallAt(p.y) * st.fallSpeed;
     p.vy = Math.max(p.vy - gravityAt(p.y) * st.gravity * dt, -maxFall);
     if (st.hover && held && p.vy < 0 && p.hoverLeft > 0 && !p.diving) {   // Hover Jets
       p.vy = Math.max(p.vy, -35);
@@ -2042,13 +2089,15 @@ function moveEnemy(e, edt, px, py) {
     if (boss.phase !== "fight") { ease(e.hx, e.hy, 2); return; }
     if (e.mode === "hover") {
       ease(VIEW_W / 2 + 150 * Math.sin(e.t * (angry ? 1.3 : 0.8)), e.hy + 20 * Math.sin(e.t * 1.7), 3);
+      const def = boss.def, k = angry ? 1 : 0;          // each boss has its own attack pattern
       e.shootT -= edt;
       if (e.shootT <= 0) {
-        e.shootT = angry ? 1.1 : 1.6;
-        const n = angry ? 5 : 3, aim = Math.atan2(py - e.y, px - e.x);
+        e.shootT = def.shotGap[k];
+        const n = def.shots[k], aim = Math.atan2(py - e.y, px - e.x);
         for (let i = 0; i < n; i++) {
           const a = aim + (i - (n - 1) / 2) * 0.25;
-          spawnFlyer("flare", e.x, e.y, Math.cos(a) * 210, Math.sin(a) * 210);
+          const shot = spawnFlyer(def.ammo, e.x, e.y, Math.cos(a) * def.speed, Math.sin(a) * def.speed);
+          if (def.tint) shot.tint = def.tint;
         }
       }
       e.diveT -= edt;
@@ -2056,7 +2105,7 @@ function moveEnemy(e, edt, px, py) {
     } else if (e.mode === "dive") {
       const dx = e.tx - e.x, dy = e.ty - e.y, d = Math.hypot(dx, dy), stepLen = 380 * edt;
       e.diveTime -= edt;
-      if (d <= stepLen || e.diveTime <= 0) { e.mode = "return"; e.diveT = angry ? 4 : 6; }
+      if (d <= stepLen || e.diveTime <= 0) { e.mode = "return"; e.diveT = boss.def.diveGap[angry ? 1 : 0]; }
       else { e.x += dx / d * stepLen; e.y += dy / d * stepLen; }
     } else {
       ease(VIEW_W / 2, e.hy, 2.5);
@@ -2249,8 +2298,10 @@ function update(dt) {
       camY += (boss.camY - camY) * Math.min(1, dt * 4);       // the screen locks onto the boss arena
     } else {
       let target = Math.min(p.y - VIEW_H * 0.42, p.landY - 40);
+      target = Math.max(target, p.y + PLAYER_H + 80 - VIEW_H);     // never let you leave the top of the screen
       if (boss.phase === "waiting") target = Math.min(target, boss.camY);
       if (target > camY) camY += (target - camY) * Math.min(1, dt * 6);
+      camY = Math.max(camY, p.y + PLAYER_H + 20 - VIEW_H);          // even a super-fast launch stays on screen
     }
 
     if (mode === "sandbox") {                   // your own level: reach the goal star
@@ -2289,9 +2340,8 @@ function update(dt) {
       onMilestone();
     }
 
-    if (touchesMoon()) endRun(true);
-    else if (p.y + PLAYER_H < camY - 4) fellOff();
-    if (state === "playing" && pendingPicks > 0) openChoice();
+    if (state === "playing" && p.y + PLAYER_H < camY - 4) fellOff();   // you win by beating the Black Hole
+    if (state === "playing" && pendingPicks > 0 && onSafeGround() && !bossActive()) openChoice();
     }
   }
   if (state === "editor") {
@@ -2330,7 +2380,7 @@ function drawSky() {
 }
 
 function drawStars(t) {
-  const vis = clamp(((camY + VIEW_H / 2) / PX_PER_M - 560) / 80, 0, 1);    // stars come out at the aurora
+  const vis = clamp(((camY + VIEW_H / 2) / PX_PER_M - 820) / 80, 0, 1);    // stars come out high in the atmosphere
   if (vis <= 0) return;
   for (const s of stars) {
     const sy = (s.y + camY * s.d) % VIEW_H;
@@ -2339,42 +2389,43 @@ function drawStars(t) {
   }
 }
 
-function drawMoon() {
-  // Far away the Moon hangs small in the sky; it grows as you climb,
-  // then becomes the real thing you can touch at the top.
-  const HANG_Y = 120;
+// The goal: far away the Black Hole hangs small at the top of the sky, and it
+// grows as you climb toward it. (Underwater it's hidden by the sea.)
+function drawMoon(t) {
+  const HANG_Y = 110;
   const realY = toScreenY(MOON_Y + MOON_R);
   let cy, r;
   if (realY >= HANG_Y) { cy = realY; r = MOON_R; }
   else { cy = HANG_Y; r = MOON_R / (1 + (HANG_Y - realY) / 1400); }
   const cx = VIEW_W / 2;
-
-  const glow = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r * 2.2);
-  glow.addColorStop(0, "rgba(255,250,220,0.35)");
-  glow.addColorStop(1, "rgba(255,250,220,0)");
+  const seen = clamp(((camY + VIEW_H / 2) / PX_PER_M - 100) / 60, 0, 1);
+  if (seen <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = seen;
+  const glow = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 2.4);
+  glow.addColorStop(0, "rgba(180,100,255,0.45)");
+  glow.addColorStop(1, "rgba(80,20,140,0)");
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2);
+  ctx.arc(cx, cy, r * 2.4, 0, Math.PI * 2);
   ctx.fill();
-
-  const body = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
-  body.addColorStop(0, "#fffbe8");
-  body.addColorStop(1, "#cfc8b0");
-  ctx.fillStyle = body;
+  ctx.translate(cx, cy);
+  ctx.rotate(t * 0.4);
+  ctx.strokeStyle = "rgba(220,160,255,0.85)";
+  ctx.lineWidth = Math.max(1.5, r * 0.12);
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, r * 1.5, r * 0.45, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = "#05010a";
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
-
-  ctx.fillStyle = "rgba(150,140,115,0.35)";
-  for (const c of craters) {
-    ctx.beginPath();
-    ctx.arc(cx + c.dx * r, cy + c.dy * r, c.r * r, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  ctx.restore();
 }
 
 function drawClouds(t) {
-  const alpha = clamp(1 - (camY / PX_PER_M - 280) / 60, 0, 1) * 0.9;      // clouds end at the storm
+  const m = camY / PX_PER_M;                 // clouds from the jungle up through the sky
+  const alpha = clamp((m - 100) / 40, 0, 1) * clamp(1 - (m - 840) / 50, 0, 1) * 0.9;
   if (alpha <= 0) return;
   ctx.fillStyle = `rgba(255,255,255,${alpha})`;
   for (const c of clouds) {
@@ -2407,6 +2458,61 @@ function drawBackItem(b, x, sy, t) {
       ctx.fillStyle = b.sec % 2 ? "rgba(70,150,80,0.9)" : "rgba(90,170,95,0.9)";
       ctx.beginPath(); ctx.ellipse(b.x, sy + 70, 130 * s, 80 * s, 0, Math.PI, 0); ctx.fill();
       ctx.fillRect(b.x - 130 * s, sy + 69, 260 * s, VIEW_H);
+      break;
+    case "kelp":                                     // swaying seaweed
+      ctx.strokeStyle = "rgba(60,170,110,0.75)";
+      ctx.lineWidth = 6 * s;
+      ctx.beginPath();
+      for (let k = 0; k <= 8; k++) ctx.lineTo(b.x + Math.sin(t * 1.5 + k * 0.7 + b.ph) * 10 * s, sy + 120 * s - k * 22 * s);
+      ctx.stroke();
+      break;
+    case "fish": {                                   // little fish swimming by
+      const dir = b.speed >= 0 ? 1 : -1;
+      ctx.fillStyle = ["rgba(255,160,70,0.9)", "rgba(255,220,90,0.9)", "rgba(120,200,255,0.9)"][Math.floor(b.ph) % 3];
+      ctx.beginPath(); ctx.ellipse(x, sy, 10 * s, 5 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x - dir * 9 * s, sy); ctx.lineTo(x - dir * 17 * s, sy - 6 * s); ctx.lineTo(x - dir * 17 * s, sy + 6 * s); ctx.fill();
+      break;
+    }
+    case "palm":                                     // jungle palm trees
+      ctx.fillStyle = "rgba(110,80,50,0.85)";
+      ctx.fillRect(b.x - 4 * s, sy - 90 * s, 8 * s, 160 * s);
+      ctx.fillStyle = "rgba(50,140,60,0.85)";
+      for (let k = 0; k < 5; k++) {
+        const a = -Math.PI / 2 + (k - 2) * 0.6 + Math.sin(t + b.ph) * 0.05;
+        ctx.beginPath();
+        ctx.ellipse(b.x + Math.cos(a) * 26 * s, sy - 90 * s + Math.sin(a) * 14 * s, 30 * s, 7 * s, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    case "peak":                                     // grey mountains
+    case "snowpeak": {
+      const w = 130 * s, h = 170 * s;
+      ctx.fillStyle = b.kind === "peak" ? "rgba(110,105,110,0.85)" : "rgba(150,165,190,0.85)";
+      ctx.beginPath(); ctx.moveTo(b.x - w, sy + h); ctx.lineTo(b.x, sy); ctx.lineTo(b.x + w, sy + h); ctx.fill();
+      ctx.fillStyle = "rgba(250,252,255,0.9)";      // snowy tip
+      const cap = b.kind === "peak" ? 0.18 : 0.42;
+      ctx.beginPath(); ctx.moveTo(b.x - w * cap, sy + h * cap); ctx.lineTo(b.x, sy); ctx.lineTo(b.x + w * cap, sy + h * cap); ctx.fill();
+      break;
+    }
+    case "moonbig":                                  // the Moon's cratered surface
+      ctx.fillStyle = "rgba(210,205,190,0.9)";
+      circle(VIEW_W / 2, sy + 260, 300);
+      ctx.fillStyle = "rgba(160,150,130,0.6)";
+      for (const c of craters) circle(VIEW_W / 2 + c.dx * 280, sy + 260 + c.dy * 280, c.r * 260);
+      break;
+    case "mars":                                     // the red planet
+      ctx.fillStyle = "rgba(200,90,50,0.9)";
+      circle(380, sy, 70);
+      ctx.fillStyle = "rgba(150,60,35,0.7)";
+      circle(360, sy - 20, 16);
+      circle(400, sy + 25, 11);
+      break;
+    case "mesa":                                     // red rock towers
+      ctx.fillStyle = "rgba(150,70,45,0.85)";
+      rr(b.x - 30 * s, sy, 60 * s, 150 * s, 6);
+      ctx.fill();
+      ctx.fillStyle = "rgba(190,95,60,0.85)";
+      ctx.fillRect(b.x - 30 * s, sy, 60 * s, 8 * s);
       break;
     case "castle":
       ctx.fillStyle = "rgba(255,255,255,0.55)";
@@ -2501,9 +2607,29 @@ function drawBackdrop(t) {
   }
 }
 
-// Rain in the storm, streaks in the wind, and lightning.
+// Bubbles in the sea, snow on the peaks, rain in the storm, wind and dust, and lightning.
 function drawWeather(t) {
-  const rain = sectionWeight(2), windW = sectionWeight(3);
+  const water = sectionWeight(secIndex("water")), snow = sectionWeight(secIndex("snowy"));
+  const rain = sectionWeight(secIndex("darksky"));
+  const windW = Math.max(sectionWeight(secIndex("sky")), sectionWeight(secIndex("mars")));
+  const dusty = sectionWeight(secIndex("mars")) > 0.5;
+  if (water > 0) {                                   // underwater: a blue tint and rising bubbles
+    ctx.fillStyle = `rgba(30,110,200,${0.16 * water})`;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.strokeStyle = `rgba(200,240,255,${0.55 * water})`;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 24; i++) {
+      const x = (i * 67 + Math.sin(t + i) * 8) % VIEW_W, y = VIEW_H - (i * 113 + t * 50) % (VIEW_H + 20);
+      ctx.beginPath(); ctx.arc(x, y, 2 + (i % 3), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+  if (snow > 0) {                                    // snowflakes drifting down
+    ctx.fillStyle = `rgba(255,255,255,${0.8 * snow})`;
+    for (let i = 0; i < 50; i++) {
+      const x = (i * 59 + Math.sin(t * 0.8 + i) * 14) % VIEW_W, y = (i * 89 + t * 60) % VIEW_H;
+      ctx.fillRect(x, y, 3, 3);
+    }
+  }
   if (rain > 0) {
     ctx.strokeStyle = `rgba(190,210,255,${0.35 * rain})`;
     ctx.lineWidth = 1.5;
@@ -2518,7 +2644,8 @@ function drawWeather(t) {
   if (windW > 0) {
     const blowing = mode === "main" && wind.phase === "blow";
     const speed = blowing ? 900 * wind.dir : 160;
-    ctx.strokeStyle = `rgba(255,255,255,${(blowing ? 0.45 : 0.18) * windW})`;
+    ctx.strokeStyle = dusty ? `rgba(230,140,90,${(blowing ? 0.55 : 0.22) * windW})`
+                            : `rgba(255,255,255,${(blowing ? 0.45 : 0.18) * windW})`;
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (let i = 0; i < 26; i++) {
@@ -2632,13 +2759,15 @@ function drawRecordLines() {
   }
 }
 
-function drawGround(sy) {
-  ctx.fillStyle = "#6b4528";
+function drawGround(sy) {                                    // the sandy sea floor
+  ctx.fillStyle = "#b89a62";
   ctx.fillRect(0, sy, VIEW_W, VIEW_H - sy + 2);
-  ctx.fillStyle = "#5cc04a";
+  ctx.fillStyle = "#e6cf94";
   ctx.fillRect(0, sy, VIEW_W, 10);
-  ctx.fillStyle = "#4aa53b";
+  ctx.fillStyle = "#cdb47a";
   ctx.fillRect(0, sy + 10, VIEW_W, 3);
+  ctx.fillStyle = "#f0e0b0";                                 // a few shells
+  for (const x of [40, 170, 300, 420]) { ctx.beginPath(); ctx.arc(x, sy + 22, 4, Math.PI, 0); ctx.fill(); }
 }
 
 function drawSign(s, sy) {
@@ -2701,17 +2830,21 @@ function drawPlatform(s, time) {
     ctx.restore();
     return;
   }
-  if (s.bouncy) {                                             // bouncy cloud
-    ctx.fillStyle = "#ffffff";
-    rr(s.x, sy + 2, s.w, 11, 5);
+  if (s.bouncy) {                                             // bouncy jungle mushroom
+    const squish = 1 + Math.sin(time * 4 + s.x) * 0.04;
+    ctx.fillStyle = "#f3e3c0";                                // stem
+    ctx.fillRect(s.x + s.w / 2 - 6, sy + 6, 12, 14);
+    ctx.fillStyle = "#e8423a";                                // red cap
+    ctx.beginPath();
+    ctx.ellipse(s.x + s.w / 2, sy + 8, s.w / 2, 12 * squish, 0, Math.PI, 0);
     ctx.fill();
-    for (let i = 0; i <= 3; i++) {
+    ctx.fillRect(s.x, sy + 7, s.w, 4);
+    ctx.fillStyle = "#ffffff";                                // white spots
+    for (let i = 1; i <= 3; i++) {
       ctx.beginPath();
-      ctx.arc(s.x + 8 + i * (s.w - 16) / 3, sy + 3, 7 + Math.sin(time * 4 + i + s.x) * 1.2, 0, Math.PI * 2);
+      ctx.arc(s.x + i * s.w / 4, sy + (i === 2 ? -1 : 3), 3, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = "rgba(170,190,255,0.5)";
-    ctx.fillRect(s.x + 4, sy + 10, s.w - 8, 3);
     return;
   }
   ctx.save();
@@ -2748,7 +2881,14 @@ function drawPlatform(s, time) {
     ctx.lineTo(s.x + s.w * 0.64, sy + 7);
     ctx.stroke();
   }
-  if (s.blink) {                                              // a soft aurora glow
+  if (s.icy) {                                                // slippery ice: pale blue with a shine
+    ctx.fillStyle = "rgba(170,225,255,0.85)";
+    rr(s.x, sy, s.w, 6, 3);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.fillRect(s.x + 6, sy + 1, Math.min(14, s.w / 3), 2);
+  }
+  if (s.blink) {                                              // a soft glow
     ctx.fillStyle = "rgba(120,255,200,0.25)";
     rr(s.x - 3, sy - 3, s.w + 6, 20, 8);
     ctx.fill();
@@ -2896,7 +3036,48 @@ function drawEnemy(e, t) {
   }
   ctx.save();
   ctx.translate(e.x, sy);
-  if (e.type === "boss") {                           // THE SUN KING
+  if (e.type === "boss" && e.kind === "golem") {     // BOULDER BULLY (mini boss)
+    const angry = e.hp <= e.maxHp / 2, bob = Math.sin(t * 4) * 3;
+    ctx.fillStyle = "#7a746c";                       // rock fists
+    for (const s of [-1, 1]) {
+      ctx.beginPath(); ctx.arc(s * (r + 10), 8 + bob * s, 11, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = angry ? "#8a6a60" : "#8c867c";   // lumpy rock body
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = i * Math.PI / 5, rad = r * (0.88 + 0.12 * Math.sin(i * 3.1));
+      ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#5fae4a";                       // moss on top
+    ctx.beginPath(); ctx.ellipse(0, -r * 0.75, r * 0.7, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(40,36,32,0.7)";          // cracks
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-r * 0.5, r * 0.1); ctx.lineTo(-r * 0.2, r * 0.4); ctx.lineTo(-r * 0.35, r * 0.7); ctx.stroke();
+    eyes(-4, 10, 5, true);
+    ctx.strokeStyle = "#2a2420";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-9, 14); ctx.lineTo(9, 14); ctx.stroke();
+  } else if (e.type === "boss" && e.kind === "void") {   // THE BLACK HOLE (final boss)
+    const angry = e.hp <= e.maxHp / 2;
+    const glow = ctx.createRadialGradient(0, 0, r * 0.6, 0, 0, r * 2);
+    glow.addColorStop(0, angry ? "rgba(255,90,160,0.55)" : "rgba(170,90,255,0.5)");
+    glow.addColorStop(1, "rgba(80,20,140,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, Math.PI * 2); ctx.fill();
+    ctx.save();                                      // spinning ring of glowing dust
+    ctx.rotate(t * 1.5);
+    for (const [w, color] of [[7, angry ? "#ff6ab4" : "#c39bff"], [3, "#ffffff"]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.beginPath(); ctx.ellipse(0, 0, r * 1.45, r * 0.45, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = "#05010a";
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    eyes(-6, 12, 6, true);
+  } else if (e.type === "boss") {                    // THE SUN KING
     const angry = e.hp <= e.maxHp / 2;
     ctx.fillStyle = angry ? "#ff5a3a" : "#ffb347";
     for (let i = 0; i < 12; i++) {                   // flickering flames all around
@@ -2926,7 +3107,7 @@ function drawEnemy(e, t) {
     ctx.beginPath(); ctx.arc(0, 18, 9, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
   } else if (e.type === "asteroid") {
     ctx.rotate(e.t * e.spin);
-    ctx.fillStyle = "#8a7864";
+    ctx.fillStyle = e.rock ? "#8c867c" : "#8a7864";
     ctx.beginPath();
     for (let i = 0; i < 9; i++) {
       const a = i * Math.PI * 2 / 9, rad = r * (0.8 + 0.2 * Math.sin(i * 2.7 + e.ph));
@@ -2940,11 +3121,11 @@ function drawEnemy(e, t) {
   } else if (e.type === "flare") {
     ctx.rotate(Math.atan2(e.vy, -e.vx));             // tail trails behind it
     const tail = ctx.createLinearGradient(0, 0, 40, 0);
-    tail.addColorStop(0, "rgba(255,170,60,0.8)");
-    tail.addColorStop(1, "rgba(255,90,40,0)");
+    tail.addColorStop(0, e.tint ? `rgba(${e.tint},0.8)` : "rgba(255,170,60,0.8)");
+    tail.addColorStop(1, e.tint ? `rgba(${e.tint},0)` : "rgba(255,90,40,0)");
     ctx.fillStyle = tail;
     ctx.beginPath(); ctx.ellipse(18, 0, 22, r * 0.8, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#ffd447";
+    ctx.fillStyle = e.tint ? `rgb(${e.tint})` : "#ffd447";
     ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#ffffff";
     ctx.beginPath(); ctx.arc(-2, -2, r * 0.45, 0, Math.PI * 2); ctx.fill();
@@ -3421,7 +3602,7 @@ function drawHUD() {
 
   const hi = scores[0];
   txt("HI", VIEW_W - 12, 12, 8, "#ffd447", "right");
-  txt(hi ? `${hi.initials} ${hi.moon ? "MOON" : hi.height + " m"}` : "---", VIEW_W - 12, 26, 12, "#ffffff", "right");
+  txt(hi ? `${hi.initials} ${hi.moon ? "WIN!" : hi.height + " m"}` : "---", VIEW_W - 12, 26, 12, "#ffffff", "right");
 
   // Progress bar: ground at the bottom, Moon at the top
   const bx = VIEW_W - 10, top = 96, bot = 690;
@@ -3429,7 +3610,7 @@ function drawHUD() {
   ctx.fillStyle = "rgba(255,255,255,0.18)";
   rr(bx - 3, top, 6, bot - top, 3);
   ctx.fill();
-  ctx.fillStyle = "#fff6d0";
+  ctx.fillStyle = "#c39bff";                                 // the Black Hole at the top
   ctx.beginPath();
   ctx.arc(bx, top - 9, 6, 0, Math.PI * 2);
   ctx.fill();
@@ -3472,6 +3653,9 @@ function drawHUD() {
   } else if (boss.phase === "waiting" && p.y >= boss.ledge.y - 40) {
     txt("WALK INTO THE BOSS GATE!", VIEW_W / 2, 250, 10, "#ffd447", "center");
   }
+  if (pendingPicks > 0 && Math.floor(performance.now() / 400) % 2 === 0) {   // an upgrade is waiting
+    txt("UPGRADE READY! LAND ON A SOLID PLATFORM", VIEW_W / 2, 236, 8, "#ffd447", "center");
+  }
   if (sectionFlash > 0) {                            // a new section!
     const s = SECTIONS[sectionReached];
     ctx.globalAlpha = Math.min(1, sectionFlash / 0.5);
@@ -3487,7 +3671,7 @@ function drawBoard(cx, y, highlight, t) {
   for (let i = 0; i < MAX_SCORES; i++) {
     const s = scores[i];
     const rank = String(i + 1).padStart(2, " ") + ".";
-    const right = s ? (s.moon ? "MOON " + fmtTime(s.time) : (s.height + " m").padStart(9)) : "".padStart(9);
+    const right = s ? (s.moon ? "WIN! " + fmtTime(s.time) : (s.height + " m").padStart(9)) : "".padStart(9);
     const line = `${rank} ${s ? s.initials : "---"}  ${right}`;
     const ry = y + i * 20;
     if (i === highlight) {
@@ -3503,7 +3687,8 @@ function drawTitle(t) {
   const cx = VIEW_W / 2;
   panel(28, 28, VIEW_W - 56, 572);
   txt("MOON HOP", cx, 54, 34, "#fff3b0", "center");
-  txt("Jump all the way to the Moon!", cx, 102, 9, "#c8d3ff", "center");
+  txt("Climb from the sea to the black hole!", cx, 102, 9, "#c8d3ff", "center");
+  if (IOS_BROWSER) txt("FULL SCREEN: SHARE > ADD TO HOME SCREEN", cx, 8, 7, "#ffd447", "center");
   const rows = IS_TOUCH
     ? [["< >", "MOVE"], ["JUMP", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"], ["SHOOT", "SHOOT"], ["SPELL", "DOG SPELL"],
        ["NEXT", "SWITCH DOG SPELL"], ["CATCH PETALS", "SUPER JUMP"], ["II", "PAUSE"]]
@@ -3683,8 +3868,8 @@ function drawOver(t) {
   }
   panel(36, 96, VIEW_W - 72, 480);
   if (result.moon) {
-    txt("YOU REACHED", cx, 124, 16, "#ffd447", "center");
-    txt("THE MOON!", cx, 148, 16, "#ffd447", "center");
+    txt("YOU BEAT", cx, 124, 16, "#ffd447", "center");
+    txt("THE BLACK HOLE!", cx, 148, 16, "#c39bff", "center");
     txt(`TIME ${fmtTime(result.time)}`, cx, 182, 10, "#ffffff", "center");
   } else {
     txt("YOU FELL!", cx, 128, 20, "#ff8a7a", "center");
@@ -3953,7 +4138,7 @@ function render(t) {
   drawSky();
   drawStars(t);
   drawBackdrop(t);
-  drawMoon();
+  drawMoon(t);
   drawClouds(t);
   const main = mode === "main";
   if (main) {
@@ -4066,6 +4251,34 @@ function updatePad() {
   }
 }
 window.addEventListener("orientationchange", () => setTimeout(resize, 200));
+
+// Phones (Round 10): iPhone Safari ignores "no zooming" in the page settings, so block
+// pinch-zoom and double-tap zoom directly, and go full screen where the browser allows it.
+if (IS_TOUCH) {
+  for (const ev of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+  }
+  document.addEventListener("touchmove", e => { if (e.touches.length > 1 || e.scale !== undefined && e.scale !== 1) e.preventDefault(); }, { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener("touchend", e => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 350) e.preventDefault();          // no double-tap zoom
+    lastTouchEnd = now;
+  }, { passive: false });
+  document.addEventListener("dblclick", e => e.preventDefault(), { passive: false });
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
+  const goFull = () => {
+    const el = document.documentElement, fs = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (fs && !document.fullscreenElement && !document.webkitFullscreenElement) {
+      try { const r = fs.call(el); if (r && r.catch) r.catch(() => {}); } catch (err) { /* not allowed here */ }
+    }
+  };
+  document.addEventListener("pointerdown", goFull, { passive: true });
+  document.addEventListener("fullscreenchange", resize);
+  document.addEventListener("webkitfullscreenchange", resize);
+}
+// iPhone can only go truly full screen from the home screen, so the title screen says how.
+const IOS_BROWSER = IS_TOUCH && navigator.standalone === false;
 
 // =====================================================================
 //  MAIN LOOP (fixed steps so the jumping feels the same on every computer)

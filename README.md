@@ -1,7 +1,10 @@
 # Moon Hop
 
-A family-built browser game: climb from the Meadow all the way to the Moon.
+A family-built browser game: climb from the bottom of the sea through the jungle, mountains,
+sky and space, past the Moon, Mars and the Sun, and beat the Black Hole.
 Every round, a family member added one new idea.
+
+Works on computers, iPads and iPhones (on-screen buttons appear on touch screens).
 
 **Play:** open the GitHub Pages link for this repo, or open `index.html` in a browser.
 
