@@ -1,0 +1,3859 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moon Hop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #05040f; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<script>
+"use strict";
+
+// =====================================================================
+//  MOON HOP - a family-built game
+//  Climb from the ground all the way up to the Moon.
+//  Every family round adds something new to this file.
+// =====================================================================
+
+// ---------- Credits: add a line every round ----------
+const CREDITS = [
+  { round: 0, who: "Claude", what: "The basic game: running, jumping, the climb to the Moon, and the high score table." },
+  { round: 1, who: "Mommy", what: "Poppy flowers that shoot petals at you when you jump. Catch petals to save up super jumps!" },
+  { round: 2, who: "G.", what: "A confetti party when you reach 100 m, and outer space with low gravity." },
+  { round: 3, who: "J.", what: "The danger zone: from 300 m up, platforms get smaller, some slide back and forth, and sweepers try to knock you off!" },
+  { round: 4, who: "Daddy", what: "Upgrades! Every 100 m pick a jump, weapon or ability upgrade (75 to find). Plus a blaster, enemies, space at 1000 m and the Moon at 1500 m." },
+  { round: 5, who: "Mommy", what: "A flying Boston terrier with purple wings and a whirly tail. Press CTRL+B and she casts a glitter spell: a purple cloud that protects you from enemies for 5 seconds." },
+  { round: 6, who: "G.", what: "Sandbox mode! Build your own levels with platforms, sweepers, poppies, enemies and a goal star, and make your own custom characters." },
+  { round: 7, who: "J.", what: "9 sections from the Meadow to the Moon, each with something new: bouncy clouds, lightning, wind, blinking and crumbling platforms, solar flares and asteroids. Plus the pixel look, scrolling backgrounds and 9 dog spells." },
+  { round: 8, who: "Daddy", what: "Boss fights! At 1000 m, walk through the Boss Gate to battle THE SUN KING. Beat him to open the way up and win a bonus upgrade. Plus scrolling credits." },
+];
+
+// ---------- Tuning ----------
+const VIEW_W = 480, VIEW_H = 720;     // the game screen (scaled to fit the window)
+const PX_PER_M = 20;                  // 20 pixels = 1 meter
+const MOON_METERS = 1500;             // how high the Moon is
+const MOON_Y = MOON_METERS * PX_PER_M;
+const MOON_R = 190;
+const TOWER_SEED = 2026;              // same tower every game, so scores are fair
+const CAM_MIN = -60;                  // lowest the camera goes (shows a strip of ground)
+
+const PLAYER_W = 22, PLAYER_H = 32;
+const GRAVITY = 1800;                 // pixels per second per second
+const JUMP_V = 680;                   // jump speed (max jump is about 128 px)
+const JUMP_CUT = 0.45;                // letting go of jump early = shorter jump
+const MAX_RUN = 260;
+const RUN_ACCEL = 2600, RUN_DECEL = 3000;
+const AIR_ACCEL = 1700, AIR_DECEL = 500;
+const MAX_FALL = 950;
+const COYOTE_TIME = 0.09;             // you can still jump just after running off an edge
+const JUMP_BUFFER = 0.12;             // pressing jump just before landing still counts
+
+// ---------- Poppies (Round 1) ----------
+const POPPY_CHANCE = 0.22;            // share of platforms that grow a poppy
+const POPPY_RANGE = 260;              // poppies this close shoot petals when you jump
+const POPPY_COOLDOWN = 1.6;           // seconds for a poppy to grow its petals back
+const PETALS_PER_SHOT = 3;
+const PETAL_LIFE = 4.5;               // seconds a petal flutters before it's gone
+const BOOST_MAX = 3;                  // most super jumps you can save up
+const BOOST_JUMP = 1.35;              // super jump speed (x normal) = about 1.8x as high
+
+// ---------- Confetti and space (Round 2, space moved up in Round 4) ----------
+const CONFETTI_AT = 100 * PX_PER_M;   // confetti party when you reach 100 m
+const SPACE_Y = 1000 * PX_PER_M;      // outer space starts at 1000 m
+const SPACE_GRAVITY = 0.55;           // gravity in space (x normal) = floaty, high jumps
+const SPACE_MAX_FALL = 0.6;           // you fall slower in space too (x normal)
+const MOON_GRAVITY_Y = 1350 * PX_PER_M;   // the Moon section is even floatier (Round 7)
+const gravityAt = y => y >= MOON_GRAVITY_Y ? GRAVITY * 0.42 : y >= SPACE_Y ? GRAVITY * SPACE_GRAVITY : GRAVITY;
+const CONFETTI_COLORS = ["#ff5a5a", "#ffd447", "#5ad1ff", "#7dff7a", "#d77dff", "#ff9f40", "#ffffff"];
+
+// ---------- The danger zone (Round 3) ----------
+const DANGER_Y = 300 * PX_PER_M;      // the difficulty turn: from 300 m up it gets tough
+const DANGER_SHRINK = 0.7;            // platforms up there are 30% smaller
+const DANGER_MIN_W = 34;
+const MOVER_CHANCE = [0.25, 0.45];    // share of platforms that slide (at 300 m, near the Moon)
+const SWEEPER_CHANCE = [0.15, 0.3];   // share of platforms with a sweeper (at 300 m, near the Moon)
+const SWEEPER_W = 14, SWEEPER_H = 14;
+const SWEEP_KNOCK_X = 380, SWEEP_KNOCK_Y = 300;
+const STUN_TIME = 0.35;               // seconds you can't steer after getting hit
+
+// ---------- Upgrades, blaster and enemies (Round 4) ----------
+const UPGRADE_EVERY_M = 100;          // pick an upgrade every 100 m
+const ENEMY_KNOCK_X = 300, ENEMY_KNOCK_Y = 240;
+const HIT_GRACE = 0.4;                // a moment of safety after any hit
+const SHIELD_RECHARGE = 20;
+const TIME_BUBBLE = { length: 3, cooldown: 20, speed: 0.4 };
+const BLINK = { dist: 90, cooldown: 6 };
+const CLOUD = { width: 80, life: 4, cooldown: 15 };
+const ENEMY_INFO = {                  // from/to = the heights (m) where each kind lives
+  grumble: { hp: 2, r: 15, from: 40, to: 700, color: "120,115,160" },
+  buzzer: { hp: 1, r: 11, from: 200, to: 1100, color: "242,208,70" },
+  swooper: { hp: 3, r: 13, from: 450, to: 1500, color: "80,105,210" },
+  jelly: { hp: 4, r: 16, from: 950, to: 1500, color: "255,140,200" },
+  // These two fly in during their sections (Round 7), so they're never placed ahead of time.
+  asteroid: { hp: 2, r: 13, from: Infinity, to: 0, color: "150,130,110" },
+  flare: { hp: 1, r: 9, from: Infinity, to: 0, color: "255,150,60" },
+  boss: { hp: 40, r: 34, from: Infinity, to: 0, color: "255,190,70" },
+};
+
+// ---------- Bosses (Round 8): one every 1000 m ----------
+// Reach the rest ledge at that height and the boss blocks the way up until you beat it.
+// The tower tops out at 1500 m, so for now there's one. Add more here if it grows.
+const BOSSES = [
+  { at: 1000, name: "THE SUN KING", hp: 25 },
+];
+const ARENA_H = 560;                  // how tall the boss arena is (pixels above the ledge)
+
+// ---------- Sections (Round 7) ----------
+// Every section has its own sky, platforms, background and something new.
+const SECTIONS = [
+  { id: "meadow", name: "THE MEADOW", from: 0, to: 150, color: "#7dff7a", tip: "HOP TO THE MOON!",
+    sky: [[143, 211, 255], [120, 195, 250]], top: [112, 204, 84], body: [128, 88, 54] },
+  { id: "clouds", name: "CLOUD KINGDOM", from: 150, to: 300, color: "#ffffff", tip: "HOLD JUMP ON BOUNCY CLOUDS!",
+    sky: [[175, 190, 255], [200, 170, 240]], top: [255, 255, 255], body: [215, 222, 245] },
+  { id: "storm", name: "STORMY SKIES", from: 300, to: 450, color: "#ffd447", tip: "LIGHTNING! AND THE DANGER ZONE",
+    sky: [[80, 88, 120], [60, 66, 96]], top: [255, 214, 90], body: [70, 76, 96] },
+  { id: "windy", name: "WINDY HEIGHTS", from: 450, to: 600, color: "#c8f0ff", tip: "WATCH OUT FOR WIND GUSTS",
+    sky: [[100, 150, 205], [70, 110, 180]], top: [214, 224, 238], body: [124, 132, 156] },
+  { id: "aurora", name: "AURORA LIGHTS", from: 600, to: 800, color: "#78ffc8", tip: "SOME PLATFORMS BLINK OUT",
+    sky: [[24, 40, 80], [16, 24, 60]], top: [120, 255, 200], body: [50, 60, 110] },
+  { id: "satellite", name: "SATELLITE ORBIT", from: 800, to: 1000, color: "#a0c8ff", tip: "CRACKED SPACE JUNK CRUMBLES",
+    sky: [[10, 14, 44], [8, 10, 32]], top: [160, 200, 255], body: [110, 116, 130] },
+  { id: "sun", name: "THE SUN", from: 1000, to: 1150, color: "#ff9f40", tip: "SOLAR FLARES! LOW GRAVITY",
+    sky: [[70, 28, 18], [40, 16, 20]], top: [255, 200, 90], body: [170, 70, 40] },
+  { id: "asteroids", name: "ASTEROID BELT", from: 1150, to: 1350, color: "#d2b48c", tip: "DODGE OR BLAST THE ASTEROIDS",
+    sky: [[16, 12, 24], [12, 10, 20]], top: [190, 160, 130], body: [100, 80, 66] },
+  { id: "moon", name: "THE MOON", from: 1350, to: 1500, color: "#fff3b0", tip: "MOON GRAVITY: EXTRA FLOATY",
+    sky: [[10, 10, 20], [6, 6, 14]], top: [236, 234, 226], body: [128, 124, 116] },
+];
+const sectionAt = m => { for (let i = SECTIONS.length - 1; i > 0; i--) if (m >= SECTIONS[i].from) return i; return 0; };
+const BLINK_CYCLE = 3.4, BLINK_ON = 2.2;   // aurora platforms: solid 2.2 s, gone 1.2 s
+
+// The dog learns a new spell in each section. V switches, CTRL+B casts.
+const SPELLS = [
+  { id: "cloud", name: "PURPLE CLOUD", cd: 15, color: "200,120,255" },     // enemies can't touch you for 5 s
+  { id: "bubble", name: "BUBBLE BOUNCE", cd: 12, color: "150,220,255" },   // a bouncy bubble under your feet
+  { id: "zap", name: "LIGHTNING ZAP", cd: 15, color: "255,240,120" },      // zaps every enemy on screen
+  { id: "tailwind", name: "TAILWIND", cd: 14, color: "200,255,220" },      // a big whoosh upward
+  { id: "rainbow", name: "RAINBOW BRIDGE", cd: 18, color: "255,150,230" }, // a wide rainbow to stand on
+  { id: "dome", name: "SAFETY DOME", cd: 20, color: "120,255,200" },       // nothing can hit you for 3 s
+  { id: "howl", name: "SLOW HOWL", cd: 20, color: "180,200,255" },         // slows everything but you
+  { id: "smash", name: "ASTEROID SMASH", cd: 20, color: "255,170,90" },    // blasts everything nearby
+  { id: "moonhowl", name: "MOON HOWL", cd: 25, color: "255,250,210" },     // full super jumps + star power
+];
+
+// ---------- The flying Boston terrier (Round 5) ----------
+const DOG_SPELL = { length: 5, cooldown: 15 };   // purple cloud lasts 5 s, recharges in 15 s
+
+// ---------- Sandbox and custom characters (Round 6) ----------
+const LEVEL_SLOTS = 5;
+const EDIT_MAX_Y = 900 * PX_PER_M;    // how tall a sandbox level can be
+const SANDBOX_KEY = "moonhop.sandbox.v1";
+const PALETTE = ["#f5f7fc", "#aab3c8", "#3a3a48", "#ff5a5a", "#ff9f40", "#ffd447", "#7dff7a",
+                 "#3fd0c9", "#5a9bff", "#a565f0", "#ff8fd0", "#8b5a2b"];
+const HATS = ["NONE", "CAP", "CROWN", "PARTY HAT", "BOW", "ANTENNA", "COWBOY HAT", "FLOWER"];
+const DEFAULT_CHARACTER = { name: "ASTRO", suit: 0, visor: 8, pack: 1, hat: 0, hatColor: 3, wings: 9 };
+const TOOLS = [
+  { id: "plat", name: "PLATFORM", tip: "DRAG LEFT TO RIGHT TO DRAW A PLATFORM" },
+  { id: "move", name: "MOVING PLATFORM", tip: "DRAW ONE, OR CLICK A PLATFORM TO MAKE IT MOVE" },
+  { id: "sweep", name: "SWEEPER", tip: "CLICK A PLATFORM TO ADD OR REMOVE A SWEEPER" },
+  { id: "poppy", name: "POPPY", tip: "CLICK A PLATFORM TO PLANT OR PICK A POPPY" },
+  { id: "grumble", name: "GRUMPY CLOUD", tip: "CLICK TO PLACE AN ENEMY", enemy: true },
+  { id: "buzzer", name: "BUZZ BUG", tip: "CLICK TO PLACE AN ENEMY", enemy: true },
+  { id: "swooper", name: "SWOOPER BIRD", tip: "CLICK TO PLACE AN ENEMY", enemy: true },
+  { id: "jelly", name: "SPACE JELLY", tip: "CLICK TO PLACE AN ENEMY", enemy: true },
+  { id: "goal", name: "GOAL STAR", tip: "CLICK TO PUT THE FINISH LINE (TOUCH IT TO WIN)" },
+  { id: "erase", name: "ERASER", tip: "CLICK SOMETHING TO REMOVE IT (OR RIGHT-CLICK)" },
+];
+const TOOLBAR_H = 56;
+
+const MAX_SCORES = 10;
+const SCORE_KEY = "moonhop.scores.v1";
+const FONT = '"Press Start 2P", "Courier New", monospace';
+
+// ---------- Little helpers ----------
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerpRGB = (a, b, t) => [0, 1, 2].map(i => Math.round(lerp(a[i], b[i], t)));
+const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const hexRGB = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mixHex = (h, to, k) => rgb(lerpRGB(hexRGB(h), to, k));   // blend a color toward `to` ([r,g,b])
+const snap = v => Math.round(v / 10) * 10;
+
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function gradientAt(stops, t) {
+  t = clamp(t, stops[0][0], stops[stops.length - 1][0]);
+  for (let i = 1; i < stops.length; i++) {
+    if (t <= stops[i][0]) {
+      const [p0, c0] = stops[i - 1], [p1, c1] = stops[i];
+      return lerpRGB(c0, c1, (t - p0) / (p1 - p0));
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
+// ---------- Canvas ----------
+const canvas = document.getElementById("game");
+const mainCtx = canvas.getContext("2d");
+// The pixel look (Round 7): the world is drawn at half size, then blown up with
+// chunky pixels. Words stay sharp: any text drawn during the world part waits in
+// textQueue and goes on top afterward.
+const PIXEL = 2;
+const worldCanvas = document.createElement("canvas");
+worldCanvas.width = VIEW_W / PIXEL;
+worldCanvas.height = VIEW_H / PIXEL;
+const wctx = worldCanvas.getContext("2d");
+let ctx = mainCtx;
+const textQueue = [];
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const scale = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
+  canvas.style.width = Math.floor(VIEW_W * scale) + "px";
+  canvas.style.height = Math.floor(VIEW_H * scale) + "px";
+  canvas.width = Math.floor(VIEW_W * scale * dpr);
+  canvas.height = Math.floor(VIEW_H * scale * dpr);
+  mainCtx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+function rr(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function txt(str, x, y, size, color, align = "left") {
+  if (ctx === wctx) { textQueue.push([txt, str, x, y, size, color, align, ctx.globalAlpha]); return; }
+  ctx.font = `${size}px ${FONT}`;
+  ctx.textAlign = align;
+  ctx.textBaseline = "top";
+  const off = Math.max(1, Math.round(size / 8));
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillText(str, x + off, y + off);
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+}
+
+function txtPlain(str, x, y, size, color, align = "left") {
+  if (ctx === wctx) { textQueue.push([txtPlain, str, x, y, size, color, align, ctx.globalAlpha]); return; }
+  ctx.font = `${size}px ${FONT}`;
+  ctx.textAlign = align;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+}
+
+function wrapLines(str, maxW, size) {
+  ctx.font = `${size}px ${FONT}`;
+  const lines = [];
+  let line = "";
+  for (const word of str.split(" ")) {
+    const test = line ? line + " " + word : word;
+    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = word; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function panel(x, y, w, h) {
+  ctx.fillStyle = "rgba(8,10,30,0.97)";
+  rr(x, y, w, h, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+// =====================================================================
+//  THE TOWER - platforms from the ground up to the Moon.
+//  Kinds: "ground", "step" (normal), "ledge" (wide rest stop every 100 m),
+//  "pad" (the last platform, right under the Moon).
+// =====================================================================
+function jumpReach(gap) {
+  // How far sideways you can travel while jumping up onto something `gap` pixels higher.
+  const disc = JUMP_V * JUMP_V - 2 * GRAVITY * gap;
+  if (disc <= 0) return 0;
+  return MAX_RUN * (JUMP_V + Math.sqrt(disc)) / GRAVITY;
+}
+
+function buildTower() {
+  const rnd = mulberry32(TOWER_SEED);
+  const R = (a, b) => a + (b - a) * rnd();
+  const list = [{ x: -40, y: 0, w: VIEW_W + 80, kind: "ground" }];
+  const padY = MOON_Y - 80;
+  let prev = { x: VIEW_W / 2 - 80, y: 0, w: 160 };
+  let nextMark = 100 * PX_PER_M;
+
+  while (true) {
+    const d = prev.y / MOON_Y;                     // 0 at the ground, 1 at the Moon
+    const maxGap = lerp(74, 108, d);
+    const remaining = padY - prev.y;
+    if (remaining <= maxGap) break;
+
+    let gap = R(lerp(56, 92, d), maxGap);
+    if (remaining - gap < 50) gap = remaining / 2;
+    let y = prev.y + gap;
+    let kind = "step", mark = 0;
+    if (y >= nextMark) {
+      kind = "ledge";
+      mark = nextMark / PX_PER_M;
+      if (nextMark - prev.y >= 45) y = nextMark;
+      nextMark += 100 * PX_PER_M;
+    }
+
+    // Platforms get narrower and farther apart the higher you go,
+    // and 30% smaller again past the difficulty turn.
+    let w = kind === "ledge" ? 190 : clamp(R(lerp(130, 48, d), lerp(170, 74, d)), 44, 190);
+    if (kind === "step" && y >= DANGER_Y) w = Math.max(DANGER_MIN_W, w * DANGER_SHRINK);
+    const edgeMax = jumpReach(y - prev.y) * lerp(0.3, 0.7, d);
+    const edge = R(-0.35 * Math.min(w, prev.w), edgeMax);   // sideways gap between edges
+    const dist = (prev.w + w) / 2 + edge;
+    const pc = prev.x + prev.w / 2;
+    const dir = rnd() < 0.5 ? -1 : 1;
+    const lo = w / 2 + 6, hi = VIEW_W - w / 2 - 6;
+    let c = pc + dir * dist;
+    if (c < lo || c > hi) c = pc - dir * dist;
+    c = clamp(c, lo, hi);
+
+    const p = { x: c - w / 2, y, w, kind };
+    if (kind === "ledge") p.mark = mark;
+    list.push(p);
+    prev = p;
+  }
+  list.push({ x: VIEW_W / 2 - 90, y: padY, w: 180, kind: "pad" });
+  return list;
+}
+const tower = buildTower();
+
+// The difficulty turn: above DANGER_Y some platforms move or get a sweeper.
+// Rest ledges and the last pad are left alone. Uses its own dice, so it's the same every game.
+function applyDangerZone() {
+  const rnd = mulberry32(TOWER_SEED + 2);
+  const R = (a, b) => a + (b - a) * rnd();
+  for (const s of tower) {
+    if (s.kind !== "step" || s.y < DANGER_Y) continue;
+    const d = (s.y - DANGER_Y) / (MOON_Y - DANGER_Y);     // 0 at the turn, 1 at the Moon
+    if (rnd() < lerp(MOVER_CHANCE[0], MOVER_CHANCE[1], d)) {
+      const room = Math.min(s.x - 4, VIEW_W - 4 - (s.x + s.w));
+      const amp = Math.min(R(40, 90), room);
+      if (amp >= 20) Object.assign(s, { baseX: s.x, amp, period: R(2.5, 4.5), phase: R(0, 6.28), ang: 0, dx: 0 });
+    } else if (s.w >= 44 && rnd() < lerp(SWEEPER_CHANCE[0], SWEEPER_CHANCE[1], d)) {
+      s.sweeper = { period: R(1.8, 2.8), phase: R(0, 1), u: 0, x: s.x, dir: 1, frozen: 0 };
+    }
+  }
+}
+applyDangerZone();
+
+// Section platforms (Round 7): bouncy clouds, blinking aurora platforms and crumbling space junk.
+function applySections() {
+  const rnd = mulberry32(TOWER_SEED + 4);
+  for (const s of tower) {
+    if (s.kind !== "step") continue;
+    const sec = SECTIONS[sectionAt(s.y / PX_PER_M)].id, r = rnd();
+    if (sec === "clouds" && r < 0.35) s.bouncy = true;
+    else if (sec === "aurora" && r < 0.3 && !s.amp && !s.sweeper) { s.blink = true; s.blinkPh = rnd() * BLINK_CYCLE; }
+    else if (sec === "satellite" && r < 0.3 && !s.amp && !s.sweeper) s.crumble = true;
+  }
+}
+applySections();
+const movers = tower.filter(s => s.amp);
+const sweepers = tower.filter(s => s.sweeper);
+
+// Poppies use their own dice, so the tower itself stays exactly the same.
+// Each poppy remembers its platform, so it rides along if the platform moves.
+function buildPoppies() {
+  const rnd = mulberry32(TOWER_SEED + 1);
+  const list = [{ x: 130, y: 0, plat: tower[0] }];     // one on the ground to say hello
+  for (const s of tower) {
+    if (s.kind !== "step" && s.kind !== "ledge") continue;
+    if (rnd() >= POPPY_CHANCE) continue;
+    const lo = s.kind === "ledge" ? s.x + s.w * 0.55 : s.x + 10;   // stay clear of ledge signs
+    list.push({ x: lerp(lo, s.x + s.w - 10, rnd()), y: s.y, plat: s });
+  }
+  for (const f of list) Object.assign(f, { off: f.x - f.plat.x, cool: 0, bounce: 0, ph: rnd() * 6.28 });
+  return list;
+}
+const poppies = buildPoppies();
+
+// Enemies float between the platforms. Same spots every game; more of them higher up.
+function buildEnemies() {
+  const rnd = mulberry32(TOWER_SEED + 3);
+  const R = (a, b) => a + (b - a) * rnd();
+  const list = [];
+  for (let m = 45; m < MOON_METERS - 40; m += lerp(70, 30, m / MOON_METERS) * R(0.8, 1.2)) {
+    const kinds = Object.keys(ENEMY_INFO).filter(k => m >= ENEMY_INFO[k].from && m <= ENEMY_INFO[k].to);
+    const type = kinds[Math.floor(rnd() * kinds.length)];
+    list.push({
+      type, hx: R(40, VIEW_W - 40), hy: m * PX_PER_M + R(30, 70), maxHp: ENEMY_INFO[type].hp,
+      r: ENEMY_INFO[type].r, ph: R(0, 6.28), amp: R(70, 150), period: R(4.5, 7),
+    });
+  }
+  return list;
+}
+const enemies = buildEnemies();
+
+// ---------- Swapping worlds: the main climb, or a level you built ----------
+const MAIN_WORLD = { tower: tower.slice(), movers: movers.slice(), sweepers: sweepers.slice(),
+                     poppies: poppies.slice(), enemies: enemies.slice() };
+
+function setWorld(w) {
+  for (const [arr, items] of [[tower, w.tower], [movers, w.movers], [sweepers, w.sweepers],
+                              [poppies, w.poppies], [enemies, w.enemies]]) {
+    arr.length = 0;
+    arr.push(...items);
+  }
+}
+
+const emptyLevel = () => ({ platforms: [], enemies: [], goal: null });
+
+// Turn a saved sandbox level into platforms, sweepers, poppies and enemies.
+function buildLevelWorld(L) {
+  const t = [{ x: -40, y: 0, w: VIEW_W + 80, kind: "ground" }];
+  const pops = [];
+  for (const p of L.platforms) {
+    const s = { x: p.x, y: p.y, w: p.w, kind: "step" };
+    if (p.move) {
+      const amp = Math.min(70, p.x - 4, VIEW_W - 4 - (p.x + p.w));
+      if (amp >= 10) Object.assign(s, { baseX: p.x, amp, period: 3.5, phase: 0, ang: 0, dx: 0 });
+    }
+    if (p.sweep && !s.amp) s.sweeper = { period: 2.2, phase: 0, u: 0, x: p.x, dir: 1, frozen: 0 };
+    t.push(s);
+    if (p.poppy != null) pops.push({ x: p.x + p.poppy, y: p.y, plat: s, off: p.poppy, cool: 0, bounce: 0, ph: p.x });
+  }
+  const ens = L.enemies.map(e => ({
+    type: e.type, hx: e.x, hy: e.y, maxHp: ENEMY_INFO[e.type].hp, r: ENEMY_INFO[e.type].r,
+    ph: 0, amp: 100, period: 5.5,
+  }));
+  return { tower: t, movers: t.filter(s => s.amp), sweepers: t.filter(s => s.sweeper), poppies: pops, enemies: ens };
+}
+
+// =====================================================================
+//  UPGRADES - every 100 m you pick one card: a JUMP, a WEAPON or an ABILITY.
+//  Each list has 25. A card you've taken won't show up again that climb.
+//  "needs" means the card only shows up once it would actually do something.
+// =====================================================================
+function baseStats() {
+  return {
+    // jump
+    jumpHeight: 1, airJumps: 0, airJumpPower: 1, runSpeed: 1, airSpeed: 1, airControl: 1,
+    gravity: 1, fallSpeed: 1, spaceJump: 1, coyote: COYOTE_TIME, boostMax: BOOST_MAX,
+    boostPower: BOOST_JUMP, petalReach: 0, extraPetals: 0, dive: false, wallKick: false,
+    hover: 0, superEvery: 0, grip: false, autoHop: false, ledgeLaunch: false, dash: false,
+    // weapon (you always start with a basic blaster)
+    damage: 1, fireDelay: 0.45, shotSpeed: 520, shotRange: 0.5, shots: 1, spread: 0.14,
+    pierce: 0, homing: 0, shotSize: 4, knockback: 0, freeze: 0, burn: 0, chain: 0,
+    lucky: 0, splash: 0, stopSweepers: 0, bounceShots: 0, petalBurst: false, drone: false,
+    aimRange: 280, boomerang: false, overcharge: 0,
+    // ability
+    rebounds: 0, shield: false, knockResist: 1, noStun: false, ghostTime: 0, timeBubble: false,
+    safetyFlag: false, refillBoosts: false, thorns: 0, radar: false, extraCard: false,
+    rerolls: 0, sweeperSpeed: 1, moverSpeed: 1, wideFeet: 0, anchor: false, blink: false,
+    shockwave: false, starPower: false, tiny: false, cloud: false, revenge: false,
+    moonlet: false, repel: false,
+  };
+}
+
+const U = (id, name, desc, apply, needs) => ({ id, name, desc, apply, needs });
+const UPGRADES = {
+  jump: [
+    U("springy", "Springy Boots", "Jump 10% higher.", s => { s.jumpHeight *= 1.1; }),
+    U("pogo", "Pogo Power", "Jump 15% higher.", s => { s.jumpHeight *= 1.15; }),
+    U("rocketLaces", "Rocket Laces", "Jump 25% higher, but run 10% slower.", s => { s.jumpHeight *= 1.25; s.runSpeed *= 0.9; }),
+    U("giantLeap", "Giant Leap", "Jump 35% higher, but fall 25% faster.", s => { s.jumpHeight *= 1.35; s.fallSpeed *= 1.25; }),
+    U("doubleJump", "Double Jump", "Jump one more time in mid-air.", s => { s.airJumps += 1; }),
+    U("cloudStep", "Cloud Step", "Your mid-air jumps go 30% higher.", s => { s.airJumpPower *= 1.14; }, s => s.airJumps > 0),
+    U("featherFall", "Feather Fall", "You fall 35% slower.", s => { s.fallSpeed *= 0.65; }),
+    U("floatySuit", "Floaty Suit", "Gravity is 10% lighter for you, everywhere.", s => { s.gravity *= 0.9; }),
+    U("coyoteCape", "Coyote Cape", "Lots more time to jump after running off an edge.", s => { s.coyote = 0.22; }),
+    U("quickFeet", "Quick Feet", "Run 15% faster.", s => { s.runSpeed *= 1.15; }),
+    U("airSteering", "Air Steering", "Steer 50% better in mid-air.", s => { s.airControl *= 1.5; }),
+    U("moonShoes", "Moon Shoes", "Jump 30% higher in space.", s => { s.spaceJump *= 1.3; }),
+    U("petalPower", "Petal Power", "Super jumps go 20% higher.", s => { s.boostPower *= 1.095; }),
+    U("petalPouch", "Petal Pouch", "Save up 2 more super jumps.", s => { s.boostMax += 2; }),
+    U("petalMagnet", "Petal Magnet", "Catch petals from much farther away.", s => { s.petalReach += 30; }),
+    U("biggerBlooms", "Bigger Blooms", "Poppies shoot 2 more petals at you.", s => { s.extraPetals += 2; }),
+    U("dive", "Dive", "Press DOWN in mid-air to drop straight down fast.", s => { s.dive = true; }),
+    U("wallKick", "Wall Kick", "Jump off the sides of the screen.", s => { s.wallKick = true; }),
+    U("hoverJets", "Hover Jets", "Hold jump while falling to hover (1 second per jump).", s => { s.hover = 1; }),
+    U("luckyFifth", "Lucky Fifth", "Every 5th jump is a free super jump.", s => { s.superEvery = 5; }),
+    U("grippyBoots", "Grippy Boots", "Stop and turn instantly on the ground.", s => { s.grip = true; }),
+    U("longLegs", "Long Legs", "Move 25% faster in mid-air.", s => { s.airSpeed *= 1.25; }),
+    U("bunnyHop", "Bunny Hop", "Hold jump to bounce again the moment you land.", s => { s.autoHop = true; }),
+    U("ledgeLauncher", "Ledge Launcher", "Rest ledges launch you with a free super jump.", s => { s.ledgeLaunch = true; }),
+    U("airDash", "Air Dash", "Press SHIFT in mid-air to dash sideways (once per jump).", s => { s.dash = true; }),
+  ],
+  weapon: [
+    U("rapidFire", "Rapid Fire", "Shoot 30% faster.", s => { s.fireDelay *= 0.7; }),
+    U("hairTrigger", "Hair Trigger", "Shoot 15% faster.", s => { s.fireDelay *= 0.85; }),
+    U("powerCell", "Power Cell", "Shots do 1 more damage.", s => { s.damage += 1; }),
+    U("megaBlast", "Mega Blast", "Shots do 2 more damage, but you shoot 25% slower.", s => { s.damage += 2; s.fireDelay *= 1.25; }),
+    U("twinShot", "Twin Shot", "Fire 1 extra shot each time.", s => { s.shots += 1; }),
+    U("spreadShot", "Spread Shot", "Fire 2 extra shots in a wide fan.", s => { s.shots += 2; s.spread += 0.08; }),
+    U("longBarrel", "Long Barrel", "Shots fly 40% farther.", s => { s.shotRange *= 1.4; }),
+    U("speedyShots", "Speedy Shots", "Shots fly 40% faster.", s => { s.shotSpeed *= 1.4; }),
+    U("piercing", "Piercing Rounds", "Shots go through 1 more enemy.", s => { s.pierce += 1; }, s => s.pierce < 99),
+    U("laserCore", "Laser Core", "Shots go through every enemy.", s => { s.pierce = 99; }),
+    U("homing", "Homing Darts", "Shots curve toward enemies.", s => { s.homing += 5; }),
+    U("bigBullets", "Big Bullets", "Shots are 60% bigger, so they hit more easily.", s => { s.shotSize *= 1.6; }),
+    U("knockShots", "Knockback Shots", "Hits push enemies away from you.", s => { s.knockback += 260; }),
+    U("freezeRay", "Freeze Ray", "Hits slow enemies way down for 2 seconds.", s => { s.freeze = 2; }),
+    U("fireShots", "Fire Shots", "Hits set enemies on fire: 1 damage a second for 3 seconds.", s => { s.burn = 3; }),
+    U("chainZap", "Chain Zap", "Hits zap 1 more enemy nearby.", s => { s.chain += 1; }),
+    U("luckyShot", "Lucky Shot", "25% chance a shot does triple damage.", s => { s.lucky += 0.25; }),
+    U("splashBomb", "Splash Bomb", "Hits explode and hurt other enemies nearby.", s => { s.splash = 60; }),
+    U("sweeperStopper", "Sweeper Stopper", "Your blaster can freeze sweepers for 4 seconds.", s => { s.stopSweepers = 4; }),
+    U("bouncyShots", "Bouncy Shots", "Shots bounce off the sides of the screen.", s => { s.bounceShots += 2; }),
+    U("petalBlaster", "Petal Blaster", "Every petal you catch fires a free shot.", s => { s.petalBurst = true; }),
+    U("helperDrone", "Helper Drone", "A little drone flies with you and shoots too.", s => { s.drone = true; }),
+    U("sniperScope", "Sniper Scope", "Your blaster locks on to enemies 50% farther away.", s => { s.aimRange *= 1.5; s.shotRange *= 1.25; }),
+    U("boomerang", "Boomerang Blaster", "Shots fly back to you and can hit again.", s => { s.boomerang = true; }),
+    U("overcharge", "Overcharge", "Every 4th shot is huge and does triple damage.", s => { s.overcharge = 4; }),
+  ],
+  ability: [
+    U("rebound", "Rebound", "Bounce off the bottom of the screen once instead of falling off.", s => { s.rebounds += 1; }),
+    U("spareSpring", "Spare Spring", "One more bounce off the bottom of the screen.", s => { s.rebounds += 1; }, s => s.rebounds > 0),
+    U("bubbleShield", "Bubble Shield", "Blocks one hit. Comes back after 20 seconds.", s => { s.shield = true; }),
+    U("ironSuit", "Iron Suit", "Hits knock you back 50% less.", s => { s.knockResist *= 0.5; }),
+    U("steadyFeet", "Steady Feet", "You can still steer right after getting hit.", s => { s.noStun = true; }),
+    U("ghostMode", "Ghost Mode", "After a hit, nothing can touch you for 2 seconds.", s => { s.ghostTime = 2; }),
+    U("timeBubble", "Time Bubble", "Press Q to slow down everything but you for 3 seconds (every 20 s).", s => { s.timeBubble = true; }),
+    U("safetyFlag", "Safety Flag", "Once per climb: fall off and you're sent back to the last rest ledge.", s => { s.safetyFlag = true; }),
+    U("secondWind", "Second Wind", "Every 100 m fills up your super jumps.", s => { s.refillBoosts = true; }),
+    U("thornArmor", "Thorn Armor", "Enemies that bump into you take 2 damage.", s => { s.thorns += 2; }),
+    U("radar", "Enemy Radar", "Arrows warn you about enemies above the screen.", s => { s.radar = true; }),
+    U("luckyClover", "Lucky Clover", "Upgrade picks show 4 cards instead of 3.", s => { s.extraCard = true; }),
+    U("reroll", "Reroll", "Press R on the upgrade screen for new cards (2 times).", s => { s.rerolls += 2; }),
+    U("slowSweepers", "Slow Sweepers", "Sweepers move 40% slower.", s => { s.sweeperSpeed *= 0.6; }),
+    U("calmPlatforms", "Calm Platforms", "Moving platforms move 35% slower.", s => { s.moverSpeed *= 0.65; }),
+    U("wideFeet", "Wide Feet", "You can land on the very edges of platforms.", s => { s.wideFeet += 8; }),
+    U("anchorBoots", "Anchor Boots", "Nothing can knock you around while you stand still.", s => { s.anchor = true; }),
+    U("blink", "Blink", "Press E to teleport forward (every 6 seconds).", s => { s.blink = true; }),
+    U("shockwave", "Shockwave", "Landing a super jump blasts nearby enemies.", s => { s.shockwave = true; }),
+    U("starPower", "Star Power", "Every 100 m you reach makes you unhittable for 5 seconds.", s => { s.starPower = true; }),
+    U("tinyMode", "Tiny Mode", "You shrink, so enemies and sweepers miss you more.", s => { s.tiny = true; }),
+    U("cloudMaker", "Cloud Maker", "Press C to make a cloud to stand on (every 15 seconds).", s => { s.cloud = true; }),
+    U("revengeBurst", "Revenge Burst", "Getting hit blasts the enemies around you.", s => { s.revenge = true; }),
+    U("moonlet", "Orbiting Moonlet", "A little moon circles you and bonks enemies.", s => { s.moonlet = true; }),
+    U("repelField", "Repel Field", "Enemies get pushed away when they come close.", s => { s.repel = true; }),
+  ],
+};
+const CATEGORY = {
+  jump: { label: "JUMP", color: "#7dff7a" },
+  weapon: { label: "WEAPON", color: "#ffb347" },
+  ability: { label: "ABILITY", color: "#c39bff" },
+};
+for (const cat in UPGRADES) for (const u of UPGRADES[cat]) u.cat = cat;
+
+// ---------- Scenery (stars, clouds, moon craters) ----------
+const deco = mulberry32(7);
+const stars = Array.from({ length: 140 }, () => ({
+  x: deco() * VIEW_W, y: deco() * VIEW_H, r: 1 + deco() * 1.6,
+  d: 0.02 + deco() * 0.06, ph: deco() * 6.28, sp: 1 + deco() * 2,
+}));
+const clouds = [];
+for (let py = 160; py < 4800; py += 150 + deco() * 160) {
+  clouds.push({ x: deco() * (VIEW_W + 160), py, s: 0.6 + deco() * 0.7, speed: 4 + deco() * 8 });
+}
+const craters = Array.from({ length: 9 }, () => {
+  const a = deco() * 6.28, dist = deco() * 0.7;
+  return { dx: Math.cos(a) * dist, dy: Math.sin(a) * dist, r: 0.06 + deco() * 0.12 };
+});
+
+// Colors by height in meters, section by section.
+const SKY = SECTIONS.flatMap(s => [[s.from + 8, s.sky[0]], [s.to - 8, s.sky[1]]]);
+const PLAT_TOP = SECTIONS.flatMap(s => [[s.from + 2, s.top], [s.to - 2, s.top]]);
+const PLAT_BODY = SECTIONS.flatMap(s => [[s.from + 2, s.body], [s.to - 2, s.body]]);
+
+// Scrolling backgrounds: each section has its own faraway things that slide by
+// slower than the platforms (BACK_P) and drift sideways.
+const BACK_P = 0.35;
+const BACKDROP_KINDS = { meadow: ["hill", 6], clouds: ["castle", 6], storm: ["thunderhead", 10], windy: ["island", 6],
+                         aurora: ["ribbon", 6], satellite: ["satellite", 8], sun: ["sun", 1], asteroids: ["rock", 16], moon: ["earth", 1] };
+const backdrop = [];
+SECTIONS.forEach((sec, i) => {
+  const [kind, count] = BACKDROP_KINDS[sec.id];
+  const lo = (sec.from * PX_PER_M - 400) * BACK_P, hi = sec.to * PX_PER_M * BACK_P + VIEW_H;
+  for (let k = 0; k < count; k++) {
+    let py = lo + deco() * (hi - lo);
+    if (kind === "hill") py = 20 + k * 30;                       // hills sit along the horizon
+    if (kind === "sun" || kind === "earth") py = (lo + hi) / 2;
+    backdrop.push({ sec: i, kind, x: deco() * (VIEW_W + 200) - 100, py, s: 0.6 + deco() * 0.8,
+                    speed: (deco() - 0.5) * 16, ph: deco() * 6.28 });
+  }
+});
+
+// =====================================================================
+//  GAME STATE
+// =====================================================================
+const player = {};
+let st = baseStats();           // your upgrades this climb
+let taken = [];                 // upgrade cards you've picked this climb
+let state = "title";            // title | credits | playing | paused | choose | over
+let camY = CAM_MIN;             // world height at the bottom of the screen
+let runTime = 0;
+let maxHeightPx = 0;
+let passedRecord = false, recordFlash = 0;
+let result = null;              // { moon, height, time }
+let overPhase = "board";        // "initials" or "board"
+let overTimer = 0;
+let entry = null;               // { letters: ["A","A","A"], pos: 0 }
+let highlightIndex = -1;
+const particles = [];
+const petals = [];
+let boosts = 0;                 // saved-up super jumps
+const confetti = [];            // screen-space confetti pieces
+let confettiDone = false;
+let spaceFlash = 0, spaceAnnounced = false;
+let dangerFlash = 0, dangerAnnounced = false;
+let milestonesDone = 0, pendingPicks = 0, choice = null;
+const shots = [], tempPlats = [], rings = [], zaps = [], texts = [];
+const drone = { x: 0, y: 0, cd: 0 };
+const dog = { x: 0, y: 0, facing: 1 };   // your flying Boston terrier
+let glitterTime = 0, glitterColor = SPELLS[0].color;
+// Sections (Round 7)
+let sectionReached = 0, sectionFlash = 0, newSpell = "";
+const storm = { t: 2, warn: 0, strike: 0, x: 0, hit: false };          // lightning
+const wind = { t: 3, phase: "calm", timer: 0, dir: 1 };                // wind gusts
+let flareT = 1.5, rockT = 1;                                           // solar flares and asteroids
+// Boss fights (Round 8)
+// phase: "none" -> "waiting" (the gate is ahead, the barrier is up) -> "intro" (you went through
+// the gate) -> "fight" -> "won"
+const boss = { phase: "none", def: null, e: null, timer: 0, ledge: null, gate: null, ceiling: 0, camY: 0, beaten: [], prize: false };
+const bossActive = () => boss.phase === "intro" || boss.phase === "fight";
+const barrierUp = () => boss.phase === "waiting" || bossActive();
+let creditsT = 0;               // how far the credits have scrolled
+const solidNow = s => !(s.gone > 0) && !(s.blink && (runTime + s.blinkPh) % BLINK_CYCLE > BLINK_ON);
+let moonletAngle = 0;
+let timeSlow = 0;
+const worldScale = () => (timeSlow > 0 ? TIME_BUBBLE.speed : 1);
+
+// Sandbox
+let mode = "main";              // "main" = the climb to the Moon, "sandbox" = a level you built
+let sbSel = 0;                  // which level slot is highlighted in the sandbox menu
+let sbReturn = "sandbox";       // after playing a level, go back to the "sandbox" menu or the "editor"
+let clearArmed = false;         // press X twice to clear a level
+const ed = { level: 0, camY: CAM_MIN, tool: 0, drag: null, mouse: { x: 0, y: 0, in: false }, msg: "", msgT: 0 };
+const cm = { row: 0 };          // character maker
+
+const toScreenY = y => VIEW_H - (y - camY);
+const onScreen = y => y > camY - 20 && y < camY + VIEW_H + 20;
+
+function resetWorld() {
+  st = baseStats();
+  taken = [];
+  Object.assign(player, {
+    x: VIEW_W / 2 - PLAYER_W / 2, y: 0, vx: 0, vy: 0, landY: 0,
+    standOn: null, stun: 0, lastLedge: tower[0],
+    onGround: true, coyote: 0, buffer: 0, jumping: false,
+    facing: 1, squash: 1, walk: 0,
+    airJumpsLeft: 0, dashReady: true, dashTime: 0, hoverLeft: 0, diving: false, superAir: false,
+    jumpCount: 0, invuln: 0, starTime: 0, shieldReady: true, shieldTimer: 0,
+    reboundsUsed: 0, flagUsed: false, rerollsUsed: 0,
+    timeCd: 0, blinkCd: 0, cloudCd: 0, fireCd: 0, shotCount: 0, spellTime: 0,
+    spells: [0], spellSel: 0, spellCds: {}, domeTime: 0,
+  });
+  sectionReached = 0;
+  sectionFlash = 0;
+  newSpell = "";
+  Object.assign(storm, { t: 2, warn: 0, strike: 0, hit: false });
+  Object.assign(wind, { t: 3, phase: "calm", timer: 0 });
+  flareT = 1.5;
+  rockT = 1;
+  Object.assign(boss, { phase: "none", def: null, e: null, timer: 0, ledge: null, gate: null, beaten: [], prize: false });
+  for (const s of tower) if (s.crumble) { s.crumbleT = 0; s.gone = 0; }
+  camY = CAM_MIN;
+  runTime = 0;
+  maxHeightPx = 0;
+  passedRecord = false;
+  recordFlash = 0;
+  particles.length = 0;
+  petals.length = 0;
+  boosts = 0;
+  for (const f of poppies) { f.cool = 0; f.bounce = 0; }
+  confetti.length = 0;
+  confettiDone = false;
+  spaceFlash = 0;
+  spaceAnnounced = false;
+  dangerFlash = 0;
+  dangerAnnounced = false;
+  milestonesDone = 0;
+  pendingPicks = 0;
+  choice = null;
+  shots.length = 0;
+  tempPlats.length = 0;
+  rings.length = 0;
+  zaps.length = 0;
+  texts.length = 0;
+  Object.assign(drone, { x: player.x, y: player.y + 50, cd: 0 });
+  Object.assign(dog, { x: player.x + PLAYER_W / 2 - 30, y: player.y + PLAYER_H + 14, facing: 1 });
+  glitterTime = 0;
+  moonletAngle = 0;
+  timeSlow = 0;
+  resetMovers();
+  resetEnemies();
+}
+
+function resetEnemies() {
+  for (const e of enemies) {
+    Object.assign(e, {
+      x: e.hx, y: e.hy, hp: e.maxHp, alive: true, t: 0, pvx: 0, pvy: 0, frozen: 0,
+      burn: 0, burnTick: 0, flash: 0, moonCd: 0, mode: "hover", cd: 1.5,
+    });
+  }
+}
+
+function startRun() {
+  mode = "main";
+  setWorld(MAIN_WORLD);
+  resetWorld();
+  state = "playing";
+}
+
+function showTitle() {
+  mode = "main";
+  setWorld(MAIN_WORLD);
+  resetWorld();
+  state = "title";
+}
+
+// ---------- Sandbox screens ----------
+const currentLevel = () => sandbox.levels[ed.level];
+
+function openSandbox() {
+  mode = "main";
+  setWorld(MAIN_WORLD);
+  resetWorld();
+  clearArmed = false;
+  state = "sandbox";
+}
+
+function openEditor(i) {
+  if (ed.level !== i) ed.camY = CAM_MIN;
+  ed.level = i;
+  if (!sandbox.levels[i]) sandbox.levels[i] = emptyLevel();
+  mode = "sandbox";
+  setWorld(buildLevelWorld(sandbox.levels[i]));
+  resetWorld();
+  ed.drag = null;
+  state = "editor";
+}
+
+function playLevel(i, from) {
+  ed.level = i;
+  sbReturn = from;
+  mode = "sandbox";
+  setWorld(buildLevelWorld(sandbox.levels[i] || emptyLevel()));
+  resetWorld();
+  player.spells = SPELLS.map((_, k) => k);        // every dog spell, for your own levels
+  state = "playing";
+}
+
+function sandboxEnd(won) {
+  result = { won, height: Math.floor(maxHeightPx / PX_PER_M), time: Math.round(runTime * 10) / 10 };
+  state = "over";
+  overPhase = "sandbox";
+  overTimer = 0.6;
+  if (won) confettiBurst();
+}
+
+function touchesGoal() {
+  const g = currentLevel() && currentLevel().goal;
+  if (!g) return false;
+  const nx = clamp(g.x, player.x, player.x + PLAYER_W), ny = clamp(g.y, player.y, player.y + PLAYER_H);
+  return (nx - g.x) ** 2 + (ny - g.y) ** 2 < 18 * 18;
+}
+
+// =====================================================================
+//  HIGH SCORES
+//  Started with "Play Moon Hop", scores are saved in scores.json in the
+//  game folder (so they survive every new build). This browser keeps a copy too.
+// =====================================================================
+const SERVED = location.protocol === "http:" || location.protocol === "https:";
+const compareScores = (a, b) => (b.height - a.height) || (a.time - b.time);
+
+function cleanScores(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(s => s && typeof s.initials === "string" && typeof s.height === "number")
+    .sort(compareScores)
+    .slice(0, MAX_SCORES);
+}
+
+function mergeScores(a, b) {
+  const seen = new Set(), out = [];
+  for (const s of [...a, ...b]) {
+    const key = `${s.initials}|${s.height}|${s.time}|${!!s.moon}`;
+    if (!seen.has(key)) { seen.add(key); out.push(s); }
+  }
+  return cleanScores(out);
+}
+
+function loadLocalScores() {
+  try { return cleanScores(JSON.parse(localStorage.getItem(SCORE_KEY) || "[]")); }
+  catch (e) { return []; }
+}
+
+const localOK = (() => {
+  try {
+    localStorage.setItem("moonhop.test", "1");
+    localStorage.removeItem("moonhop.test");
+    return true;
+  } catch (e) { return false; }
+})();
+let fileScoresOK = false;
+let scores = loadLocalScores();
+
+function storeScores() {
+  try { localStorage.setItem(SCORE_KEY, JSON.stringify(scores)); } catch (e) { /* the file copy still works */ }
+  if (SERVED) {
+    fetch("/api/scores", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scores) })
+      .then(r => { fileScoresOK = r.ok; })
+      .catch(() => { fileScoresOK = false; });
+  }
+}
+
+if (SERVED) {
+  fetch("/api/scores", { cache: "no-store" })
+    .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then(arr => {
+      const fromFile = cleanScores(arr);
+      fileScoresOK = true;
+      scores = mergeScores(fromFile, scores);
+      if (scores.length !== fromFile.length) storeScores();   // copy browser-only scores into the file
+    })
+    .catch(() => { fileScoresOK = false; });
+}
+
+// ---------- Sandbox levels and custom characters: saved in sandbox.json ----------
+function cleanSandbox(d) {
+  const out = { levels: [], characters: [], selected: 0 };
+  for (let i = 0; i < LEVEL_SLOTS; i++) {
+    const L = d && Array.isArray(d.levels) ? d.levels[i] : null;
+    out.levels.push(L && Array.isArray(L.platforms) ? {
+      platforms: L.platforms.filter(p => p && typeof p.x === "number" && typeof p.y === "number"),
+      enemies: Array.isArray(L.enemies) ? L.enemies.filter(e => e && ENEMY_INFO[e.type]) : [],
+      goal: L.goal && typeof L.goal.x === "number" ? L.goal : null,
+    } : null);
+  }
+  const chars = d && Array.isArray(d.characters) && d.characters.length ? d.characters : [DEFAULT_CHARACTER];
+  out.characters = chars.slice(0, 8).map(c => ({ ...DEFAULT_CHARACTER, ...c }));
+  out.selected = clamp(Number(d && d.selected) || 0, 0, out.characters.length - 1);
+  return out;
+}
+
+let sandbox = (() => {
+  try { return cleanSandbox(JSON.parse(localStorage.getItem(SANDBOX_KEY) || "null")); }
+  catch (e) { return cleanSandbox(null); }
+})();
+const currentChar = () => sandbox.characters[sandbox.selected] || DEFAULT_CHARACTER;
+
+function saveSandbox() {
+  try { localStorage.setItem(SANDBOX_KEY, JSON.stringify(sandbox)); } catch (e) { /* the file copy still works */ }
+  if (SERVED) {
+    fetch("/api/sandbox", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sandbox) })
+      .catch(() => {});
+  }
+}
+
+if (SERVED) {
+  fetch("/api/sandbox", { cache: "no-store" })
+    .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then(d => { if (d && Array.isArray(d.levels)) sandbox = cleanSandbox(d); })
+    .catch(() => {});
+}
+
+function qualifies(r) {
+  return r.height > 0 && (scores.length < MAX_SCORES || compareScores(r, scores[MAX_SCORES - 1]) < 0);
+}
+
+function endRun(moon) {
+  if (moon) maxHeightPx = MOON_Y;
+  result = {
+    moon,
+    height: moon ? MOON_METERS : Math.floor(maxHeightPx / PX_PER_M),
+    time: Math.round(runTime * 10) / 10,
+  };
+  state = "over";
+  overTimer = 0.9;              // short pause so a held key doesn't skip the screen
+  highlightIndex = -1;
+  if (qualifies(result)) {
+    overPhase = "initials";
+    const fromName = (currentChar().name.toUpperCase().replace(/[^A-Z]/g, "") + "AAA").slice(0, 3);
+    entry = { letters: fromName.split(""), pos: 0 };          // starts as your character's name
+  } else {
+    overPhase = "board";
+  }
+}
+
+function saveEntry() {
+  const rec = { initials: entry.letters.join(""), height: result.height, moon: result.moon, time: result.time };
+  scores.push(rec);
+  scores.sort(compareScores);
+  scores = scores.slice(0, MAX_SCORES);
+  highlightIndex = scores.indexOf(rec);
+  storeScores();
+  overPhase = "board";
+  overTimer = 0.3;
+}
+
+// =====================================================================
+//  INPUT
+// =====================================================================
+const keys = {};
+const JUMP_CODES = ["Space", "ArrowUp", "KeyW"];
+const NO_SCROLL = ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace"];
+
+window.addEventListener("keydown", e => {
+  if (NO_SCROLL.includes(e.code)) e.preventDefault();
+  if (e.code === "KeyB" && (e.ctrlKey || e.metaKey)) {   // CTRL+B: the dog's glitter spell
+    e.preventDefault();                                  // (stops the browser's bookmark bar)
+    if (state === "playing" && !e.repeat) castDogSpell();
+    return;
+  }
+  keys[e.code] = true;
+  const initials = state === "over" && overPhase === "initials";
+  if (e.repeat && !initials) return;
+  onKeyPress(e);
+});
+window.addEventListener("keyup", e => { keys[e.code] = false; });
+window.addEventListener("blur", () => {
+  for (const k in keys) keys[k] = false;
+  if (state === "playing") state = "paused";
+});
+
+function onKeyPress(e) {
+  const c = e.code;
+  if (state === "title") {
+    if (c === "Space" || c === "Enter") startRun();
+    else if (c === "KeyC") { state = "credits"; creditsT = 0; }
+    else if (c === "KeyS") openSandbox();
+  } else if (state === "sandbox") {
+    handleSandboxKey(e);
+  } else if (state === "editor") {
+    handleEditorKey(e);
+  } else if (state === "chars") {
+    handleCharKey(e);
+  } else if (state === "credits") {
+    state = "title";
+  } else if (state === "playing") {
+    if (JUMP_CODES.includes(c)) player.buffer = JUMP_BUFFER;
+    else if (c === "KeyP" || c === "Escape") state = "paused";
+    else if (c === "ArrowDown" || c === "KeyS") useDive();
+    else if (c === "ShiftLeft" || c === "ShiftRight") useDash();
+    else if (c === "KeyQ") useTimeBubble();
+    else if (c === "KeyE") useBlink();
+    else if (c === "KeyC") useCloud();
+    else if (c === "KeyV" && player.spells.length > 1) player.spellSel = (player.spellSel + 1) % player.spells.length;
+  } else if (state === "paused") {
+    if (c === "KeyP" || c === "Escape" || c === "Enter") state = "playing";
+    else if (mode === "sandbox" && c === "KeyE") openEditor(ed.level);
+  } else if (state === "choose") {
+    handleChooseKey(e);
+  } else if (state === "over") {
+    handleOverKey(e);
+  }
+}
+
+function shiftLetter(ch, step) {
+  const n = (ch.charCodeAt(0) - 65 + step + 26) % 26;
+  return String.fromCharCode(65 + n);
+}
+
+function handleOverKey(e) {
+  if (overTimer > 0) return;
+  const c = e.code;
+  if (overPhase === "sandbox") {
+    if (c === "KeyR" || c === "Space" || c === "Enter") playLevel(ed.level, sbReturn);
+    else if (c === "KeyE") openEditor(ed.level);
+    else if (c === "Escape") openSandbox();
+    return;
+  }
+  if (overPhase === "initials") {
+    const L = entry.letters;
+    if (c === "ArrowUp") L[entry.pos] = shiftLetter(L[entry.pos], 1);
+    else if (c === "ArrowDown") L[entry.pos] = shiftLetter(L[entry.pos], -1);
+    else if (c === "ArrowLeft" || c === "Backspace") entry.pos = Math.max(0, entry.pos - 1);
+    else if (c === "ArrowRight") entry.pos = Math.min(2, entry.pos + 1);
+    else if (c === "Enter") { if (entry.pos < 2) entry.pos++; else saveEntry(); }
+    else if (/^[a-z]$/i.test(e.key)) {
+      L[entry.pos] = e.key.toUpperCase();
+      if (entry.pos < 2) entry.pos++;
+    }
+  } else {
+    if (c === "Space" || c === "Enter") startRun();
+    else if (c === "Escape") showTitle();
+  }
+}
+
+// ---------- Sandbox menu ----------
+function handleSandboxKey(e) {
+  const c = e.code;
+  if (c !== "KeyX") clearArmed = false;
+  if (c === "ArrowUp" || c === "KeyW") sbSel = (sbSel + LEVEL_SLOTS - 1) % LEVEL_SLOTS;
+  else if (c === "ArrowDown" || c === "KeyS") sbSel = (sbSel + 1) % LEVEL_SLOTS;
+  else if (c === "Enter") openEditor(sbSel);
+  else if (c === "Space") { if (sandbox.levels[sbSel]) playLevel(sbSel, "sandbox"); }
+  else if (c === "KeyX" && sandbox.levels[sbSel]) {
+    if (clearArmed) { sandbox.levels[sbSel] = null; saveSandbox(); clearArmed = false; }
+    else clearArmed = true;
+  }
+  else if (c === "KeyC") { cm.row = 0; state = "chars"; }
+  else if (c === "Escape") showTitle();
+}
+
+// ---------- Level builder ----------
+const edWorldY = my => ed.camY + (VIEW_H - my);
+const edMsg = str => { ed.msg = str; ed.msgT = 1.6; };
+
+function handleEditorKey(e) {
+  const c = e.code;
+  if (/^Digit[0-9]$/.test(c)) ed.tool = (Number(c.slice(5)) + 9) % 10;     // 1..9 then 0
+  else if (c === "Enter" || c === "KeyP") { saveSandbox(); playLevel(ed.level, "editor"); }
+  else if (c === "Escape") { saveSandbox(); openSandbox(); }
+}
+
+function editorChanged() {
+  setWorld(buildLevelWorld(currentLevel()));
+  resetMovers();
+  resetEnemies();
+  saveSandbox();
+}
+
+function platAt(L, x, wy) {
+  for (let i = L.platforms.length - 1; i >= 0; i--) {
+    const p = L.platforms[i];
+    if (x >= p.x - 4 && x <= p.x + p.w + 4 && wy >= p.y - 14 && wy <= p.y + 28) return p;
+  }
+  return null;
+}
+
+function eraseAt(L, x, wy) {
+  const ei = L.enemies.findIndex(e => Math.hypot(e.x - x, e.y - wy) < ENEMY_INFO[e.type].r + 10);
+  if (ei >= 0) { L.enemies.splice(ei, 1); return; }
+  if (L.goal && Math.hypot(L.goal.x - x, L.goal.y - wy) < 26) { L.goal = null; return; }
+  const withPoppy = L.platforms.find(p => p.poppy != null && Math.abs(p.x + p.poppy - x) < 10 && wy > p.y + 8 && wy < p.y + 34);
+  if (withPoppy) { withPoppy.poppy = null; return; }
+  const p = platAt(L, x, wy);
+  if (p) L.platforms.splice(L.platforms.indexOf(p), 1);
+}
+
+function editorPress(m, button) {
+  if (m.y >= VIEW_H - TOOLBAR_H) {                               // the toolbar
+    const i = Math.floor(m.x / (VIEW_W / TOOLS.length));
+    if (TOOLS[i]) ed.tool = i;
+    return;
+  }
+  const L = currentLevel(), tool = TOOLS[ed.tool];
+  const x = clamp(m.x, 0, VIEW_W), wy = edWorldY(m.y);
+  if (button === 2 || tool.id === "erase") { eraseAt(L, x, wy); editorChanged(); return; }
+  if (wy > EDIT_MAX_Y) { edMsg("THAT'S AS HIGH AS LEVELS GO"); return; }
+  const hit = platAt(L, x, wy);
+
+  if (tool.id === "plat" || tool.id === "move") {
+    if (tool.id === "move" && hit) {
+      hit.move = hit.move ? 0 : 1;
+      if (hit.move) hit.sweep = 0;
+      editorChanged();
+      return;
+    }
+    if (wy < 40) { edMsg("TOO CLOSE TO THE GROUND"); return; }
+    ed.drag = { x: snap(x), y: snap(wy), move: tool.id === "move" };
+  } else if (tool.id === "sweep") {
+    if (!hit) { edMsg("CLICK ON A PLATFORM"); return; }
+    if (!hit.sweep && (hit.move || hit.w < 44)) { edMsg(hit.move ? "NOT ON MOVING PLATFORMS" : "PLATFORM IS TOO SMALL"); return; }
+    hit.sweep = hit.sweep ? 0 : 1;
+    editorChanged();
+  } else if (tool.id === "poppy") {
+    if (!hit) { edMsg("CLICK ON A PLATFORM"); return; }
+    hit.poppy = hit.poppy != null ? null : clamp(x - hit.x, 6, hit.w - 6);
+    editorChanged();
+  } else if (tool.enemy) {
+    if (L.enemies.length >= 60) { edMsg("THAT'S A LOT OF ENEMIES!"); return; }
+    L.enemies.push({ type: tool.id, x: clamp(x, 16, VIEW_W - 16), y: Math.max(50, wy) });
+    editorChanged();
+  } else if (tool.id === "goal") {
+    L.goal = { x: clamp(x, 16, VIEW_W - 16), y: Math.max(50, wy) };
+    editorChanged();
+  }
+}
+
+function editorRelease(m) {
+  const d = ed.drag;
+  ed.drag = null;
+  let x1 = Math.min(d.x, snap(m.x)), x2 = Math.max(d.x, snap(m.x));
+  if (x2 - x1 < 20) { x1 = d.x - 40; x2 = d.x + 40; }                  // just a click: a normal-size platform
+  x1 = clamp(x1, 0, VIEW_W - 30);
+  x2 = clamp(x2, x1 + 30, VIEW_W);
+  const L = currentLevel();
+  if (L.platforms.length >= 300) { edMsg("THAT'S A LOT OF PLATFORMS!"); return; }
+  L.platforms.push({ x: x1, y: d.y, w: x2 - x1, move: d.move ? 1 : 0, sweep: 0, poppy: null });
+  editorChanged();
+}
+
+function mouseToGame(ev) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (ev.clientX - r.left) / r.width * VIEW_W, y: (ev.clientY - r.top) / r.height * VIEW_H };
+}
+canvas.addEventListener("mousedown", ev => {
+  if (state !== "editor") return;
+  ev.preventDefault();
+  editorPress(mouseToGame(ev), ev.button);
+});
+window.addEventListener("mousemove", ev => {
+  const m = mouseToGame(ev);
+  Object.assign(ed.mouse, { x: m.x, y: m.y, in: m.x >= 0 && m.x <= VIEW_W && m.y >= 0 && m.y <= VIEW_H });
+});
+window.addEventListener("mouseup", ev => { if (state === "editor" && ed.drag) editorRelease(mouseToGame(ev)); });
+canvas.addEventListener("wheel", ev => {
+  if (state !== "editor") return;
+  ev.preventDefault();
+  ed.camY = clamp(ed.camY - ev.deltaY * 0.8, CAM_MIN, EDIT_MAX_Y - VIEW_H + 200);
+}, { passive: false });
+canvas.addEventListener("contextmenu", ev => ev.preventDefault());
+
+// ---------- Character maker ----------
+const CHAR_ROWS = ["CHARACTER", "NAME", "SUIT", "VISOR", "BACKPACK", "HAT", "HAT COLOR", "DOG WINGS"];
+const COLOR_ROWS = { SUIT: "suit", VISOR: "visor", BACKPACK: "pack", "HAT COLOR": "hatColor", "DOG WINGS": "wings" };
+
+function handleCharKey(e) {
+  const c = e.code, ch = currentChar(), row = CHAR_ROWS[cm.row];
+  const step = c === "ArrowLeft" ? -1 : c === "ArrowRight" ? 1 : 0;
+  if (c === "ArrowUp") cm.row = (cm.row + CHAR_ROWS.length - 1) % CHAR_ROWS.length;
+  else if (c === "ArrowDown") cm.row = (cm.row + 1) % CHAR_ROWS.length;
+  else if (c === "Escape" || c === "Enter") { saveSandbox(); state = "sandbox"; }
+  else if (c === "Insert" || (c === "KeyN" && row !== "NAME")) {
+    if (sandbox.characters.length < 8) {
+      sandbox.characters.push({ ...DEFAULT_CHARACTER, name: "NEW" });
+      sandbox.selected = sandbox.characters.length - 1;
+      cm.row = 1;
+    }
+  } else if (c === "Delete" && sandbox.characters.length > 1) {
+    sandbox.characters.splice(sandbox.selected, 1);
+    sandbox.selected = Math.min(sandbox.selected, sandbox.characters.length - 1);
+  } else if (step && row === "CHARACTER") {
+    sandbox.selected = (sandbox.selected + step + sandbox.characters.length) % sandbox.characters.length;
+  } else if (step && row === "HAT") {
+    ch.hat = (ch.hat + step + HATS.length) % HATS.length;
+  } else if (step && COLOR_ROWS[row]) {
+    const k = COLOR_ROWS[row];
+    ch[k] = (ch[k] + step + PALETTE.length) % PALETTE.length;
+  } else if (row === "NAME") {
+    if (c === "Backspace") ch.name = ch.name.slice(0, -1);
+    else if (e.key && /^[a-z0-9 ]$/i.test(e.key) && ch.name.length < 8) ch.name += e.key.toUpperCase();
+  }
+}
+
+// ---------- The upgrade picker ----------
+const rerollsLeft = () => st.rerolls - player.rerollsUsed;
+
+function randomCard(cat, exclude) {
+  const pool = UPGRADES[cat].filter(u => !taken.includes(u) && !exclude.includes(u) && (!u.needs || u.needs(st)));
+  return pool.length ? pick(pool) : null;
+}
+
+function dealCards() {
+  const cards = [];
+  for (const cat of ["jump", "weapon", "ability"]) {
+    const card = randomCard(cat, cards);
+    if (card) cards.push(card);
+  }
+  if (st.extraCard) {                                  // Lucky Clover: one bonus card
+    for (let tries = 0; tries < 6; tries++) {
+      const card = randomCard(pick(["jump", "weapon", "ability"]), cards);
+      if (card) { cards.push(card); break; }
+    }
+  }
+  choice.cards = cards;
+  choice.sel = 0;
+}
+
+function openChoice() {
+  choice = { cards: [], sel: 0, delay: 0.6, mark: (milestonesDone - pendingPicks + 1) * UPGRADE_EVERY_M, bonus: boss.prize };
+  boss.prize = false;
+  dealCards();
+  if (!choice.cards.length) { pendingPicks = 0; choice = null; return; }   // nothing left to offer
+  state = "choose";
+}
+
+function takeCard(i) {
+  const card = choice.cards[i];
+  if (!card) return;
+  card.apply(st);
+  taken.push(card);
+  floatText(player.x + PLAYER_W / 2, player.y + PLAYER_H + 30, card.name.toUpperCase(), CATEGORY[card.cat].color);
+  pendingPicks--;
+  if (pendingPicks > 0) openChoice();
+  else { state = "playing"; choice = null; }
+}
+
+function handleChooseKey(e) {
+  if (choice.delay > 0) return;
+  const c = e.code, n = choice.cards.length;
+  if (c === "ArrowLeft" || c === "KeyA") choice.sel = (choice.sel + n - 1) % n;
+  else if (c === "ArrowRight" || c === "KeyD") choice.sel = (choice.sel + 1) % n;
+  else if (c === "Enter" || c === "Space") takeCard(choice.sel);
+  else if (/^Digit[1-4]$/.test(c)) takeCard(Number(c.slice(5)) - 1);
+  else if (c === "KeyR" && rerollsLeft() > 0) { player.rerollsUsed++; dealCards(); }
+}
+
+function onMilestone() {
+  if (st.refillBoosts) boosts = st.boostMax;
+  if (st.starPower) { player.invuln = Math.max(player.invuln, 5); player.starTime = 5; }
+}
+
+// =====================================================================
+//  UPDATE
+// =====================================================================
+function puff(x, y, n, spread, color = "255,255,255") {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x, y, vx: (Math.random() * 2 - 1) * spread, vy: 20 + Math.random() * 60,
+      life: 0.3 + Math.random() * 0.25, max: 0.55, color,
+    });
+  }
+}
+const ring = (x, y, r, color) => rings.push({ x, y, r, color, life: 0.35 });
+const floatText = (x, y, str, color) => texts.push({ x, y, str, color, life: 0.9 });
+
+// When you jump, every nearby poppy shoots a spray of petals at you.
+function poppiesShoot() {
+  const px = player.x + PLAYER_W / 2, py = player.y + PLAYER_H / 2;
+  const count = PETALS_PER_SHOT + st.extraPetals;
+  for (const f of poppies) {
+    if (f.cool > 0) continue;
+    const hx = f.x, hy = f.y + 20;                   // the flower head
+    const sy = toScreenY(hy);
+    if (sy < 0 || sy > VIEW_H) continue;             // only poppies you can see
+    if (Math.hypot(px - hx, py - hy) > POPPY_RANGE) continue;
+    f.cool = POPPY_COOLDOWN;
+    f.bounce = 1;
+    // Aim at where you'll be near the top of your jump, not where you were.
+    const T = 0.35;
+    const tx = clamp(px + player.vx * T, 0, VIEW_W);
+    const ty = py + player.vy * T - 0.5 * gravityAt(player.y) * T * T;
+    const dx = tx - hx, dy = ty - hy;
+    const aim = Math.atan2(dy, dx);
+    const speed = Math.max(40, Math.hypot(dx, dy)) * 4.3;   // arrives in about T seconds, then flutters
+    for (let i = 0; i < count; i++) {
+      const a = aim + (i - (count - 1) / 2) * 0.18 + (Math.random() - 0.5) * 0.08;
+      petals.push({
+        x: hx, y: hy, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+        age: 0, rot: Math.random() * 6.28, spin: (Math.random() * 2 - 1) * 6, ph: Math.random() * 6.28,
+      });
+    }
+  }
+}
+
+// Petals zoom out, slow down, then flutter gently down. Touch one to catch it.
+function updatePoppies(dt) {
+  for (const f of poppies) {
+    if (f.cool > 0) f.cool -= dt;
+    f.bounce = Math.max(0, f.bounce - dt * 3);
+  }
+  const drag = Math.min(1, 2.5 * dt);
+  const reach = 8 + st.petalReach;
+  for (let i = petals.length - 1; i >= 0; i--) {
+    const q = petals[i];
+    q.vx -= q.vx * drag;
+    q.vy -= q.vy * drag;
+    q.vy -= 120 * (q.y >= SPACE_Y ? SPACE_GRAVITY : 1) * dt;
+    q.x += (q.vx + Math.sin(q.age * 3 + q.ph) * 25) * dt;
+    q.y += q.vy * dt;
+    q.rot += q.spin * dt;
+    q.age += dt;
+    const caught = q.x > player.x - reach && q.x < player.x + PLAYER_W + reach &&
+                   q.y > player.y - reach && q.y < player.y + PLAYER_H + reach;
+    if (caught) {
+      if (boosts < st.boostMax) boosts++;
+      puff(q.x, q.y, 5, 60, "255,90,80");
+      petals.splice(i, 1);
+      if (st.petalBurst) {                             // Petal Blaster: a free shot
+        const x = player.x + PLAYER_W / 2, y = player.y + PLAYER_H * 0.55;
+        const target = nearestTarget(x, y, st.aimRange * 1.3);
+        if (target) makeShot(x, y, Math.atan2(target.y - y, target.x - x), st.damage);
+      }
+    } else if (q.age > PETAL_LIFE) {
+      petals.splice(i, 1);
+    }
+  }
+}
+
+// Moving platforms slide back and forth; sweepers zoom along their platforms.
+function resetMovers() {
+  for (const s of movers) { s.ang = s.phase; s.x = s.baseX + s.amp * Math.sin(s.ang); s.dx = 0; }
+  for (const s of sweepers) { s.sweeper.u = s.sweeper.phase; s.sweeper.frozen = 0; }
+  updateMovers(0);
+}
+
+function updateMovers(dt) {
+  const ws = worldScale();
+  for (const s of movers) {
+    s.ang += dt * ws * st.moverSpeed * 2 * Math.PI / s.period;
+    const nx = s.baseX + s.amp * Math.sin(s.ang);
+    s.dx = nx - s.x;
+    s.x = nx;
+  }
+  for (const s of sweepers) {
+    const sw = s.sweeper;
+    if (sw.frozen > 0) sw.frozen -= dt;
+    else sw.u = (sw.u + dt * ws * st.sweeperSpeed / sw.period) % 1;
+    sw.dir = sw.u < 0.5 ? 1 : -1;
+    sw.x = s.x + (sw.u < 0.5 ? sw.u * 2 : 2 - sw.u * 2) * (s.w - SWEEPER_W);
+  }
+  for (const f of poppies) f.x = f.plat.x + f.off;
+  for (const s of tower) {                                   // crumbling space junk
+    if (!s.crumble) continue;
+    if (s.crumbleT > 0) {
+      s.crumbleT -= dt;
+      if (s.crumbleT <= 0) {
+        s.gone = 4;                                            // falls away, back in 4 seconds
+        for (let k = 0; k < 4; k++) puff(s.x + Math.random() * s.w, s.y, 3, 60, "150,160,180");
+      }
+    } else if (s.gone > 0) s.gone -= dt;
+  }
+}
+
+// ---------- Section hazards (Round 7) ----------
+function spawnFlyer(type, x, y, vx, vy, warn = 0) {
+  const info = ENEMY_INFO[type];
+  enemies.push({
+    type, dyn: true, hx: x, hy: y, x, y, vx, vy, warn, maxHp: info.hp, hp: info.hp,
+    r: info.r * (type === "asteroid" ? 0.8 + Math.random() * 0.5 : 1), alive: true, t: 0,
+    pvx: 0, pvy: 0, frozen: 0, burn: 0, burnTick: 0, flash: 0, moonCd: 0,
+    ph: Math.random() * 6.28, spin: (Math.random() - 0.5) * 3,
+  });
+}
+
+function updateSections(dt) {
+  const p = player, px = p.x + PLAYER_W / 2, ws = worldScale();
+  const sec = SECTIONS[sectionAt(p.y / PX_PER_M)].id;
+
+  // Stormy Skies: a warning flicker, then a lightning bolt straight down
+  if (storm.warn > 0) {
+    storm.warn -= dt * ws;
+    if (storm.warn <= 0) { storm.strike = 0.25; storm.hit = false; }
+  } else if (storm.strike > 0) {
+    storm.strike -= dt;
+    if (!storm.hit && Math.abs(px - storm.x) < 18) {
+      storm.hit = true;
+      if (hitPlayer(px >= storm.x ? 1 : -1, 340, 280)) puff(px, p.y + 16, 12, 120, "255,240,120");
+    }
+  } else if (sec === "storm") {
+    storm.t -= dt * ws;
+    if (storm.t <= 0) {
+      storm.x = clamp(px + (Math.random() - 0.5) * 180, 20, VIEW_W - 20);
+      storm.warn = 0.9;
+      storm.t = 2.5 + Math.random() * 2;
+    }
+  }
+
+  // Windy Heights: a warning, then a gust that pushes you sideways
+  if (wind.phase === "warn") {
+    wind.timer -= dt;
+    if (wind.timer <= 0) { wind.phase = "blow"; wind.timer = 2.5; }
+  } else if (wind.phase === "blow") {
+    wind.timer -= dt;
+    p.x = clamp(p.x + wind.dir * (p.onGround ? 70 : 140) * dt * ws, 0, VIEW_W - PLAYER_W);   // slides you along
+    if (wind.timer <= 0) { wind.phase = "calm"; wind.t = 3 + Math.random() * 2.5; }
+  } else if (sec === "windy") {
+    wind.t -= dt;
+    if (wind.t <= 0) { wind.phase = "warn"; wind.timer = 1.1; wind.dir = Math.random() < 0.5 ? -1 : 1; }
+  }
+
+  // The Sun: solar flares shoot across from the right (with a warning first)
+  if (sec === "sun" && boss.phase === "none") {
+    flareT -= dt * ws;
+    if (flareT <= 0) {
+      flareT = 2 + Math.random() * 1.3;
+      spawnFlyer("flare", VIEW_W + 20, p.y + 16 + (Math.random() - 0.3) * 260, -240, 0, 0.8);
+    }
+  }
+  // Asteroid Belt: rocks drift down from above
+  if (sec === "asteroids") {
+    rockT -= dt * ws;
+    if (rockT <= 0) {
+      rockT = 1.4 + Math.random() * 1.2;
+      spawnFlyer("asteroid", 30 + Math.random() * (VIEW_W - 60), camY + VIEW_H + 30, (Math.random() - 0.5) * 120, -(50 + Math.random() * 70));
+    }
+  }
+}
+
+// ---------- Boss fights (Round 8) ----------
+function startBossFight() {
+  const def = boss.def;
+  boss.phase = "intro";
+  boss.timer = 2.2;
+  for (const e of enemies) {                                    // clear the arena for the big fight
+    if (e.dyn || (e.y > boss.ledge.y - 300 && e.y < boss.ceiling + 300)) e.alive = false;
+  }
+  const e = {
+    type: "boss", boss: true, hx: VIEW_W / 2, hy: boss.ceiling - 170, x: VIEW_W / 2, y: boss.ceiling + 150,
+    maxHp: def.hp, hp: def.hp, r: ENEMY_INFO.boss.r, alive: true, t: 0, pvx: 0, pvy: 0, frozen: 0,
+    burn: 0, burnTick: 0, flash: 0, moonCd: 0, ph: 0, mode: "hover", shootT: 2, diveT: 6,
+  };
+  enemies.push(e);
+  boss.e = e;
+}
+
+function updateBoss(dt) {
+  const p = player;
+  if (boss.phase === "none") {                    // getting close to a boss you haven't beaten?
+    const def = BOSSES.find(b => !boss.beaten.includes(b.at) && b.at < MOON_METERS &&
+                                 p.y >= b.at * PX_PER_M - 600 && p.y < b.at * PX_PER_M + ARENA_H);
+    const ledge = def && tower.find(s => s.kind === "ledge" && s.mark === def.at);
+    if (!ledge) return;
+    Object.assign(boss, {
+      phase: "waiting", def, ledge, ceiling: ledge.y + ARENA_H, camY: ledge.y - 140,
+      gate: { x: ledge.x + ledge.w - 50, w: 36, h: 52 },
+    });
+  }
+  if (boss.phase === "waiting") {                 // walk into the gate to start the fight
+    const g = boss.gate;
+    if (p.onGround && p.standOn === boss.ledge && p.x + PLAYER_W > g.x + 8 && p.x < g.x + g.w - 8) startBossFight();
+  } else if (boss.phase === "intro") {
+    boss.timer -= dt;
+    if (boss.timer <= 0) boss.phase = "fight";
+  } else if (boss.phase === "fight" && !boss.e.alive) {   // you won!
+    boss.phase = "won";
+    boss.timer = 4;
+    boss.beaten.push(boss.def.at);
+    for (const e of enemies) if (e.dyn) e.alive = false;
+    confettiBurst();
+    boosts = st.boostMax;
+    p.invuln = Math.max(p.invuln, 4);
+    p.starTime = 4;
+    pendingPicks++;                               // the prize: a free upgrade pick
+    boss.prize = true;
+  } else if (boss.phase === "won") {
+    boss.timer -= dt;
+    if (boss.timer <= 0) boss.phase = "none";
+  }
+  // The barrier: no climbing past the boss until it's beaten
+  if (barrierUp() && p.y + PLAYER_H > boss.ceiling && p.y < boss.ceiling + 120) {
+    p.y = boss.ceiling - PLAYER_H;
+    if (p.vy > 0) p.vy = 0;
+    p.jumping = false;
+  }
+}
+
+function updateTempPlats(dt) {
+  for (let i = tempPlats.length - 1; i >= 0; i--) {
+    tempPlats[i].life -= dt;
+    if (tempPlats[i].life <= 0) tempPlats.splice(i, 1);
+  }
+}
+
+// Your body for getting hit. Tiny Mode makes it smaller (your feet stay put).
+function hazardBox() {
+  const p = player;
+  return st.tiny ? { x: p.x + 4, y: p.y, w: PLAYER_W - 8, h: PLAYER_H - 10 }
+                 : { x: p.x, y: p.y, w: PLAYER_W, h: PLAYER_H };
+}
+
+// Something bumped you. Returns true if it actually knocked you.
+function hitPlayer(dirX, kx, ky, enemy = null) {
+  const p = player;
+  if (p.domeTime > 0) {                                            // the dog's Safety Dome blocks everything
+    if (enemy) enemy.pvx -= dirX * 260;
+    return false;
+  }
+  if (enemy && p.spellTime > 0) {                                  // the dog's purple cloud:
+    enemy.pvx -= dirX * 260;                                       // enemies bounce right off
+    enemy.pvy += 120;
+    return false;
+  }
+  if (p.invuln > 0) return false;
+  const moving = keys.ArrowLeft || keys.ArrowRight || keys.KeyA || keys.KeyD;
+  if (st.anchor && p.onGround && !moving) return false;            // Anchor Boots
+  if (enemy && st.thorns) damageEnemy(enemy, st.thorns);           // Thorn Armor
+  const cx = p.x + PLAYER_W / 2, cy = p.y + PLAYER_H / 2;
+  if (st.shield && p.shieldReady) {                                 // Bubble Shield
+    p.shieldReady = false;
+    p.shieldTimer = SHIELD_RECHARGE;
+    p.invuln = 0.6;
+    ring(cx, cy, 40, "120,220,255");
+    floatText(cx, p.y + PLAYER_H + 20, "BLOCKED!", "#8fe3ff");
+    return false;
+  }
+  p.vx = dirX * kx * st.knockResist;
+  p.vy = ky * st.knockResist;
+  Object.assign(p, { onGround: false, standOn: null, coyote: 0, jumping: false, diving: false, dashTime: 0 });
+  p.stun = st.noStun ? 0 : STUN_TIME;
+  p.squash = 0.75;
+  p.invuln = Math.max(HIT_GRACE, st.ghostTime);
+  if (st.revenge) blastAround(cx, cy, 110, 2, 0, "255,120,120");   // Revenge Burst
+  return true;
+}
+
+// Touch a sweeper and it knocks you sideways in the direction it's going.
+function checkSweepers() {
+  const p = player, hb = hazardBox();
+  for (const s of sweepers) {
+    const sw = s.sweeper;
+    if (sw.frozen > 0) continue;
+    if (hb.x + hb.w > sw.x + 2 && hb.x < sw.x + SWEEPER_W - 2 && hb.y < s.y + SWEEPER_H && hb.y + hb.h > s.y) {
+      if (hitPlayer(sw.dir, SWEEP_KNOCK_X, SWEEP_KNOCK_Y)) puff(p.x + PLAYER_W / 2, p.y + 10, 10, 120, "255,212,71");
+      break;
+    }
+  }
+}
+
+// ---------- Jumping and moving ----------
+function doJump(kind, wallDir = 0) {
+  const p = player;
+  const inSpace = p.y >= SPACE_Y;
+  let v = JUMP_V * Math.sqrt(st.jumpHeight * (inSpace ? st.spaceJump : 1));
+  let superJump = false;
+  if (kind === "ground") {
+    p.jumpCount++;
+    p.airJumpsLeft = st.airJumps;                           // leaving the ground refills mid-air jumps
+    const free = (st.ledgeLaunch && p.standOn && p.standOn.kind === "ledge") ||
+                 (st.superEvery > 0 && p.jumpCount % st.superEvery === 0);
+    if (free) superJump = true;
+    else if (boosts > 0) { boosts--; superJump = true; }   // saved petals power up your next jump
+  } else if (kind === "air") {
+    p.airJumpsLeft--;
+    v *= st.airJumpPower;
+  } else {                                                   // wall kick
+    v *= 0.95;
+    p.vx = wallDir * MAX_RUN * st.runSpeed;
+    p.facing = wallDir;
+  }
+  if (superJump) v *= st.boostPower;
+  p.vy = v;
+  Object.assign(p, { onGround: false, standOn: null, coyote: 0, buffer: 0, jumping: true, diving: false });
+  p.superAir = superJump;
+  p.squash = superJump ? 1.45 : 1.3;
+  const cx = p.x + PLAYER_W / 2;
+  if (superJump) puff(cx, p.y, 14, 120, "235,50,43");
+  else if (kind === "air") puff(cx, p.y, 8, 70, "200,230,255");
+  else puff(cx, p.y, 4, 50);
+  if (kind !== "air") poppiesShoot();
+}
+
+function land(s, impact, wasGround) {
+  const p = player;
+  p.y = s.y;
+  p.landY = s.y;
+  p.vy = 0;
+  p.onGround = true;
+  p.standOn = s;
+  p.airJumpsLeft = st.airJumps;
+  p.dashReady = true;
+  p.hoverLeft = st.hover;
+  p.diving = false;
+  if (s.kind === "ledge" || s.kind === "ground") p.lastLedge = s;
+  if (s.crumble && !(s.crumbleT > 0)) s.crumbleT = 0.6;              // space junk starts to crumble
+  if (s.bouncy) {                                                    // bouncy cloud: boing! (hold jump to go high)
+    Object.assign(p, { vy: JUMP_V * 1.3, onGround: false, standOn: null, jumping: true, superAir: false, squash: 0.7 });
+    puff(p.x + PLAYER_W / 2, p.y, 6, 60, "235,240,255");
+    return;
+  }
+  if (wasGround) return;
+  p.squash = impact > 550 ? 0.7 : 0.85;
+  if (impact > 350) puff(p.x + PLAYER_W / 2, p.y, 6, 70);
+  if (p.superAir && st.shockwave) blastAround(p.x + PLAYER_W / 2, p.y + 10, 130, 2, 320, "255,200,90");
+  p.superAir = false;
+  if (st.autoHop && (keys.Space || keys.ArrowUp || keys.KeyW)) p.buffer = JUMP_BUFFER;   // Bunny Hop
+}
+
+function updatePlayer(dt) {
+  const p = player;
+  if (p.onGround && p.standOn) p.x += p.standOn.dx || 0;   // ride along on moving platforms
+  if (p.stun > 0) p.stun -= dt;
+  const left = keys.ArrowLeft || keys.KeyA;
+  const right = keys.ArrowRight || keys.KeyD;
+  const held = keys.Space || keys.ArrowUp || keys.KeyW;
+  const dir = p.stun > 0 ? 0 : (right ? 1 : 0) - (left ? 1 : 0);   // no steering while knocked
+  const inSpace = p.y >= SPACE_Y;
+  const maxRun = MAX_RUN * st.runSpeed * (p.onGround ? 1 : st.airSpeed);
+
+  // Running
+  if (p.dashTime > 0) {
+    p.dashTime -= dt;
+    p.vx = p.facing * 640;
+  } else if (st.grip && p.onGround) {
+    if (dir) p.facing = dir;
+    p.vx = dir * maxRun;
+  } else if (dir !== 0) {
+    p.facing = dir;
+    const accel = p.onGround ? RUN_ACCEL : AIR_ACCEL * st.airControl;
+    const turning = Math.sign(p.vx) === -dir;
+    p.vx = clamp(p.vx + dir * accel * dt * (turning ? 1.6 : 1), -maxRun, maxRun);
+  } else {
+    const slow = (p.onGround ? RUN_DECEL : AIR_DECEL) * dt;
+    p.vx = Math.abs(p.vx) <= slow ? 0 : p.vx - Math.sign(p.vx) * slow;
+  }
+
+  // Jumping: from the ground, off a wall (Wall Kick), or in mid-air (Double Jump)
+  p.coyote = p.onGround ? st.coyote : p.coyote - dt;
+  p.buffer -= dt;
+  const wall = p.x <= 0.5 ? -1 : (p.x >= VIEW_W - PLAYER_W - 0.5 ? 1 : 0);
+  if (p.buffer > 0 && p.stun <= 0) {
+    if (p.coyote > 0) doJump("ground");
+    else if (st.wallKick && wall !== 0) doJump("wall", -wall);
+    else if (p.airJumpsLeft > 0) doJump("air");
+  }
+  if (p.jumping && !held && p.vy > 0) { p.vy *= JUMP_CUT; p.jumping = false; }
+  if (p.vy <= 0) p.jumping = false;
+
+  // Gravity (switched off for a moment during an Air Dash)
+  if (p.dashTime > 0) {
+    p.vy = 0;
+  } else {
+    const maxFall = p.diving ? MAX_FALL * 1.6 : MAX_FALL * (inSpace ? SPACE_MAX_FALL : 1) * st.fallSpeed;
+    p.vy = Math.max(p.vy - gravityAt(p.y) * st.gravity * dt, -maxFall);
+    if (st.hover && held && p.vy < 0 && p.hoverLeft > 0 && !p.diving) {   // Hover Jets
+      p.vy = Math.max(p.vy, -35);
+      p.hoverLeft -= dt;
+      if (Math.random() < 0.35) puff(p.x + PLAYER_W / 2, p.y, 1, 30, "120,220,255");
+    }
+  }
+
+  // Sideways movement, with the screen edges as walls
+  p.x += p.vx * dt;
+  if (p.x < 0) { p.x = 0; p.vx = 0; }
+  if (p.x > VIEW_W - PLAYER_W) { p.x = VIEW_W - PLAYER_W; p.vx = 0; }
+
+  // Up and down. Platforms are one-way: jump up through them, land on top.
+  const prevY = p.y;
+  const wasGround = p.onGround;
+  p.y += p.vy * dt;
+  p.onGround = false;
+  if (p.vy <= 0) {
+    const edge = 3 - st.wideFeet;
+    search:
+    for (const list of [tower, tempPlats]) {
+      for (const s of list) {
+        if (prevY >= s.y && p.y <= s.y && p.x + PLAYER_W > s.x + edge && p.x < s.x + s.w - edge && solidNow(s)) {
+          land(s, -p.vy, wasGround);
+          break search;
+        }
+      }
+    }
+  }
+
+  if (!p.onGround) p.standOn = null;
+  p.squash += (1 - p.squash) * Math.min(1, dt * 14);
+  if (p.onGround && Math.abs(p.vx) > 20) p.walk += dt * Math.abs(p.vx) * 0.06;
+}
+
+// ---------- Ability buttons ----------
+function useDive() {
+  const p = player;
+  if (!st.dive || p.onGround) return;
+  p.diving = true;
+  p.jumping = false;
+  p.dashTime = 0;
+  p.vy = Math.min(p.vy, -700);
+}
+
+function useDash() {
+  const p = player;
+  if (!st.dash || p.onGround || !p.dashReady) return;
+  p.dashReady = false;
+  p.dashTime = 0.16;
+  p.diving = false;
+  puff(p.x + PLAYER_W / 2, p.y + 12, 8, 60, "200,230,255");
+}
+
+function useTimeBubble() {
+  if (!st.timeBubble || player.timeCd > 0) return;
+  timeSlow = TIME_BUBBLE.length;
+  player.timeCd = TIME_BUBBLE.cooldown;
+}
+
+function useBlink() {
+  const p = player;
+  if (!st.blink || p.blinkCd > 0) return;
+  puff(p.x + PLAYER_W / 2, p.y + 16, 10, 80, "195,155,255");
+  p.x = clamp(p.x + p.facing * BLINK.dist, 0, VIEW_W - PLAYER_W);
+  if (!p.onGround) p.vy = Math.max(p.vy, 0);
+  p.blinkCd = BLINK.cooldown;
+  puff(p.x + PLAYER_W / 2, p.y + 16, 10, 80, "195,155,255");
+}
+
+function useCloud() {
+  const p = player;
+  if (!st.cloud || p.cloudCd > 0) return;
+  tempPlats.push({ x: p.x + PLAYER_W / 2 - CLOUD.width / 2, y: p.y - 2, w: CLOUD.width, kind: "cloud", life: CLOUD.life, dx: 0 });
+  p.cloudCd = CLOUD.cooldown;
+}
+
+// ---------- The flying Boston terrier ----------
+// She flies just behind you. CTRL+B: she sprays glitter from her butt, and it
+// becomes a purple cloud that keeps enemies off you for a few seconds.
+function castDogSpell() {
+  const p = player, sp = SPELLS[p.spells[p.spellSel]];
+  if ((p.spellCds[sp.id] || 0) > 0) return;
+  p.spellCds[sp.id] = sp.cd;
+  glitterTime = 0.5;
+  glitterColor = sp.color;
+  const cx = p.x + PLAYER_W / 2;
+  floatText(cx, p.y + PLAYER_H + 28, sp.name + "!", `rgb(${sp.color})`);
+  switch (sp.id) {
+    case "cloud": p.spellTime = DOG_SPELL.length; break;
+    case "bubble":
+      tempPlats.push({ x: clamp(cx - 35, 0, VIEW_W - 70), y: p.y - 2, w: 70, kind: "bubble", life: 3, dx: 0, bouncy: true });
+      break;
+    case "zap":
+      for (const e of enemies) {
+        if (!e.alive || e.warn > 0 || !onScreen(e.y)) continue;
+        zaps.push({ x1: dog.x, y1: dog.y, x2: e.x, y2: e.y, life: 0.3 });
+        damageEnemy(e, 2);
+      }
+      break;
+    case "tailwind":
+      Object.assign(p, { vy: Math.max(p.vy, JUMP_V * 1.5), onGround: false, standOn: null, jumping: false, diving: false });
+      puff(cx, p.y, 14, 100, sp.color);
+      break;
+    case "rainbow":
+      tempPlats.push({ x: clamp(cx - 110, 0, VIEW_W - 220), y: p.y - 2, w: 220, kind: "rainbow", life: 6, dx: 0 });
+      break;
+    case "dome": p.domeTime = 3; break;
+    case "howl": timeSlow = 4; break;
+    case "smash": blastAround(cx, p.y + 16, 700, 3, 300, sp.color); break;
+    case "moonhowl":
+      boosts = st.boostMax;
+      p.invuln = Math.max(p.invuln, 5);
+      p.starTime = 5;
+      break;
+  }
+}
+
+function updateDog(dt) {
+  const p = player, cx = p.x + PLAYER_W / 2;
+  const tx = cx - p.facing * 30, ty = p.y + PLAYER_H + 14;
+  dog.x += (tx - dog.x) * Math.min(1, dt * 4);
+  dog.y += (ty - dog.y) * Math.min(1, dt * 4);
+  if (Math.abs(cx - dog.x) > 4) dog.facing = cx > dog.x ? 1 : -1;
+  if (glitterTime > 0) {                                   // glitter streams from her butt to you
+    glitterTime -= dt;
+    const bx = dog.x - dog.facing * 11, by = dog.y + 2;
+    const dx = cx - bx, dy = p.y + PLAYER_H / 2 - by;
+    for (let i = 0; i < 3; i++) {
+      particles.push({
+        x: bx, y: by, vx: dx * 2.4 + (Math.random() - 0.5) * 70, vy: dy * 2.4 + 90 + (Math.random() - 0.5) * 70,
+        life: 0.45 + Math.random() * 0.2, max: 0.65,
+        color: pick([glitterColor, glitterColor, "255,230,120", "255,255,255"]),
+      });
+    }
+  }
+}
+
+// ---------- The blaster ----------
+function nearestTarget(x, y, range) {
+  let best = null, bestD = range;
+  for (const e of enemies) {
+    if (!e.alive || e.warn > 0 || !onScreen(e.y)) continue;
+    let d = Math.hypot(e.x - x, e.y - y);
+    if (e.boss) d = Math.min(d, 120);         // in a boss fight, aim at the boss unless something is right next to you
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  if (st.stopSweepers) {                     // Sweeper Stopper: sweepers are targets too
+    for (const s of sweepers) {
+      if (s.sweeper.frozen > 0) continue;
+      const tx = s.sweeper.x + SWEEPER_W / 2, ty = s.y + SWEEPER_H / 2;
+      if (!onScreen(ty)) continue;
+      const d = Math.hypot(tx - x, ty - y);
+      if (d < bestD) { bestD = d; best = { x: tx, y: ty }; }
+    }
+  }
+  return best;
+}
+
+function makeShot(x, y, angle, dmg, opts = {}) {
+  shots.push({
+    x, y, vx: Math.cos(angle) * st.shotSpeed, vy: Math.sin(angle) * st.shotSpeed,
+    life: Math.max(st.shotRange, opts.reach ? opts.reach / st.shotSpeed + 0.15 : 0), dmg, pierce: st.pierce, hit: new Set(), size: st.shotSize * (opts.big ? 1.6 : 1),
+    bounces: st.bounceShots, back: false, big: !!opts.big, drone: !!opts.drone,
+  });
+}
+
+// Your blaster aims itself at the nearest enemy. No enemy? It shoots the way you face.
+function fireBlaster() {
+  const p = player, x = p.x + PLAYER_W / 2, y = p.y + PLAYER_H * 0.55;
+  const target = nearestTarget(x, y, st.aimRange);
+  const aim = target ? Math.atan2(target.y - y, target.x - x) : (p.facing > 0 ? 0.1 : Math.PI - 0.1);
+  p.shotCount++;
+  const big = st.overcharge > 0 && p.shotCount % st.overcharge === 0;
+  const reach = target && target.boss ? Math.hypot(target.x - x, target.y - y) : 0;   // shots reach the boss
+  for (let i = 0; i < st.shots; i++) {
+    makeShot(x, y, aim + (i - (st.shots - 1) / 2) * st.spread, st.damage * (big ? 3 : 1), { big, reach });
+  }
+}
+
+const moonletPos = () => ({
+  x: player.x + PLAYER_W / 2 + Math.cos(moonletAngle) * 36,
+  y: player.y + PLAYER_H / 2 + Math.sin(moonletAngle) * 36,
+});
+
+function damageEnemy(e, amount) {
+  if (!e.alive) return;
+  e.hp -= amount;
+  e.flash = 0.12;
+  floatText(e.x, e.y + e.r + 4, `-${amount}`, "#ffffff");
+  if (e.hp <= 0) {
+    e.alive = false;
+    puff(e.x, e.y, 16, 150, ENEMY_INFO[e.type].color);
+  }
+}
+
+// Shockwave and Revenge Burst: hurt and push every enemy within `radius`.
+function blastAround(x, y, radius, dmg, push, color) {
+  ring(x, y, radius, color);
+  for (const e of enemies) {
+    if (!e.alive || e.warn > 0) continue;
+    const d = Math.hypot(e.x - x, e.y - y);
+    if (d > radius + e.r) continue;
+    damageEnemy(e, dmg);
+    if (push && d > 0.1) { e.pvx += (e.x - x) / d * push; e.pvy += (e.y - y) / d * push; }
+  }
+}
+
+function shotHits(e, s) {
+  let dmg = s.dmg;
+  if (st.lucky && Math.random() < st.lucky) { dmg *= 3; floatText(e.x, e.y + 34, "LUCKY!", "#7dff7a"); }
+  damageEnemy(e, dmg);
+  if (st.freeze) e.frozen = st.freeze;
+  if (st.burn) { if (e.burn <= 0) e.burnTick = 1; e.burn = st.burn; }
+  if (st.knockback) {
+    const sp = Math.hypot(s.vx, s.vy) || 1;
+    e.pvx += s.vx / sp * st.knockback;
+    e.pvy += s.vy / sp * st.knockback;
+  }
+  if (st.splash) {
+    ring(e.x, e.y, st.splash, "255,160,60");
+    for (const o of enemies) {
+      if (o !== e && o.alive && Math.hypot(o.x - e.x, o.y - e.y) < st.splash + o.r) damageEnemy(o, 1);
+    }
+  }
+  if (st.chain) {
+    const zapped = new Set([e]);
+    let from = e;
+    for (let k = 0; k < st.chain; k++) {
+      let next = null, bestD = 150;
+      for (const o of enemies) {
+        if (!o.alive || zapped.has(o)) continue;
+        const d = Math.hypot(o.x - from.x, o.y - from.y);
+        if (d < bestD) { bestD = d; next = o; }
+      }
+      if (!next) break;
+      zaps.push({ x1: from.x, y1: from.y, x2: next.x, y2: next.y, life: 0.2 });
+      damageEnemy(next, 1);
+      zapped.add(next);
+      from = next;
+    }
+  }
+}
+
+function updateBlaster(dt) {
+  const p = player;
+  const px = p.x + PLAYER_W / 2, py = p.y + PLAYER_H * 0.55;
+  p.fireCd -= dt;
+  if ((keys.KeyF || keys.KeyJ) && p.fireCd <= 0) {
+    fireBlaster();
+    p.fireCd = st.fireDelay;
+  }
+
+  if (st.drone) {                                    // Helper Drone
+    const tx = px - p.facing * 26, ty = p.y + PLAYER_H + 20;
+    drone.x += (tx - drone.x) * Math.min(1, dt * 5);
+    drone.y += (ty - drone.y) * Math.min(1, dt * 5);
+    drone.cd -= dt;
+    if (drone.cd <= 0) {
+      const target = nearestTarget(drone.x, drone.y, st.aimRange);
+      if (target) { makeShot(drone.x, drone.y, Math.atan2(target.y - drone.y, target.x - drone.x), 1, { drone: true }); drone.cd = 1.1; }
+      else drone.cd = 0.2;
+    }
+  }
+  if (st.moonlet) moonletAngle += dt * 3.2;
+
+  for (let i = shots.length - 1; i >= 0; i--) {
+    const s = shots[i];
+    if (s.back) {                                     // Boomerang: fly home
+      const dx = px - s.x, dy = py - s.y, d = Math.hypot(dx, dy);
+      if (d < 16) { shots.splice(i, 1); continue; }
+      s.vx = dx / d * st.shotSpeed;
+      s.vy = dy / d * st.shotSpeed;
+    } else if (st.homing) {                           // Homing Darts: curve toward enemies
+      const target = nearestTarget(s.x, s.y, 220);
+      if (target) {
+        const want = Math.atan2(target.y - s.y, target.x - s.x);
+        let cur = Math.atan2(s.vy, s.vx);
+        const diff = ((want - cur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        cur += clamp(diff, -st.homing * dt, st.homing * dt);
+        const sp = Math.hypot(s.vx, s.vy);
+        s.vx = Math.cos(cur) * sp;
+        s.vy = Math.sin(cur) * sp;
+      }
+    }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.life -= dt;
+    if (s.x < 0 || s.x > VIEW_W) {
+      if (s.bounces > 0) { s.bounces--; s.vx = -s.vx; s.x = clamp(s.x, 0, VIEW_W); }
+      else if (!s.back) { shots.splice(i, 1); continue; }
+    }
+    if (s.life <= 0) {
+      if (st.boomerang && !s.back) { s.back = true; s.hit.clear(); s.life = 2; }
+      else { shots.splice(i, 1); continue; }
+    }
+
+    let gone = false;
+    for (const e of enemies) {
+      if (!e.alive || e.warn > 0 || s.hit.has(e)) continue;
+      if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + s.size) {
+        s.hit.add(e);
+        shotHits(e, s);
+        if (s.pierce > 0) s.pierce--;
+        else if (st.boomerang && !s.back) { s.back = true; s.hit.clear(); s.hit.add(e); s.life = 2; }
+        else { gone = true; break; }
+      }
+    }
+    if (!gone && st.stopSweepers) {
+      for (const pl of sweepers) {
+        const sw = pl.sweeper;
+        if (sw.frozen > 0) continue;
+        if (s.x > sw.x - s.size && s.x < sw.x + SWEEPER_W + s.size && s.y > pl.y - s.size && s.y < pl.y + SWEEPER_H + s.size) {
+          sw.frozen = st.stopSweepers;
+          ring(sw.x + SWEEPER_W / 2, pl.y + SWEEPER_H / 2, 24, "120,220,255");
+          gone = true;
+          break;
+        }
+      }
+    }
+    if (gone) shots.splice(i, 1);
+  }
+}
+
+// ---------- Enemies ----------
+function moveEnemy(e, edt, px, py) {
+  const ease = (tx, ty, rate) => {
+    const k = Math.min(1, edt * rate);
+    e.x += (tx - e.x) * k;
+    e.y += (ty - e.y) * k;
+  };
+  if (e.boss) {                        // the boss: glide, throw fireballs, dive-bomb
+    const angry = e.hp <= e.maxHp / 2;
+    if (boss.phase !== "fight") { ease(e.hx, e.hy, 2); return; }
+    if (e.mode === "hover") {
+      ease(VIEW_W / 2 + 150 * Math.sin(e.t * (angry ? 1.3 : 0.8)), e.hy + 20 * Math.sin(e.t * 1.7), 3);
+      e.shootT -= edt;
+      if (e.shootT <= 0) {
+        e.shootT = angry ? 1.1 : 1.6;
+        const n = angry ? 5 : 3, aim = Math.atan2(py - e.y, px - e.x);
+        for (let i = 0; i < n; i++) {
+          const a = aim + (i - (n - 1) / 2) * 0.25;
+          spawnFlyer("flare", e.x, e.y, Math.cos(a) * 210, Math.sin(a) * 210);
+        }
+      }
+      e.diveT -= edt;
+      if (e.diveT <= 0) Object.assign(e, { mode: "dive", tx: px, ty: py, diveTime: 1.2 });
+    } else if (e.mode === "dive") {
+      const dx = e.tx - e.x, dy = e.ty - e.y, d = Math.hypot(dx, dy), stepLen = 380 * edt;
+      e.diveTime -= edt;
+      if (d <= stepLen || e.diveTime <= 0) { e.mode = "return"; e.diveT = angry ? 4 : 6; }
+      else { e.x += dx / d * stepLen; e.y += dy / d * stepLen; }
+    } else {
+      ease(VIEW_W / 2, e.hy, 2.5);
+      if (Math.abs(e.y - e.hy) < 15) e.mode = "hover";
+    }
+  } else if (e.dyn) {                  // flares and asteroids fly in a straight line
+    if (e.warn > 0) { e.warn -= edt; return; }
+    e.x += e.vx * edt;
+    e.y += e.vy * edt;
+    if (e.x < -60 || e.x > VIEW_W + 60 || e.y < camY - 150 || e.y > camY + VIEW_H + 100) e.alive = false;   // gone off screen
+  } else if (e.type === "grumble") {   // grumpy cloud: drifts back and forth
+    ease(e.hx + e.amp * Math.sin(e.t * 2 * Math.PI / e.period + e.ph), e.hy + 8 * Math.sin(e.t * 1.7 + e.ph), 3);
+  } else if (e.type === "buzzer") {    // zips all the way across the screen
+    ease(VIEW_W / 2 + (VIEW_W / 2 - 30) * Math.sin(e.t * 0.9 + e.ph), e.hy + 22 * Math.sin(e.t * 3.2 + e.ph), 6);
+  } else if (e.type === "swooper") {   // hovers, then dives at you
+    if (e.mode === "hover") {
+      ease(e.hx + 30 * Math.sin(e.t * 1.3 + e.ph), e.hy + 10 * Math.sin(e.t * 2 + e.ph), 3);
+      e.cd -= edt;
+      if (e.cd <= 0 && Math.hypot(px - e.x, py - e.y) < 230) {
+        Object.assign(e, { mode: "dive", tx: px, ty: py, diveT: 0.9 });
+      }
+    } else if (e.mode === "dive") {
+      const dx = e.tx - e.x, dy = e.ty - e.y, d = Math.hypot(dx, dy);
+      const stepLen = 320 * edt;
+      e.diveT -= edt;
+      if (d <= stepLen || e.diveT <= 0) { e.mode = "return"; e.cd = 2.5; }
+      else { e.x += dx / d * stepLen; e.y += dy / d * stepLen; }
+    } else {
+      ease(e.hx, e.hy, 2);
+      if (Math.hypot(e.hx - e.x, e.hy - e.y) < 12) e.mode = "hover";
+    }
+  } else {                             // space jelly: slowly floats after you
+    const near = Math.hypot(px - e.hx, py - e.hy) < 320;
+    const tx = near ? px : e.hx, ty = near ? py : e.hy;
+    const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy) || 1;
+    const stepLen = Math.min(45 * edt, d);
+    e.x += dx / d * stepLen;
+    e.y += dy / d * stepLen + Math.sin(e.t * 2 + e.ph) * 10 * edt;
+  }
+}
+
+function updateEnemies(dt) {
+  const p = player, px = p.x + PLAYER_W / 2, py = p.y + PLAYER_H / 2;
+  const ws = worldScale();
+  const hb = hazardBox();
+  const moon = st.moonlet ? moonletPos() : null;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.y < camY - 250 || e.y > camY + VIEW_H + 300) continue;    // asleep until you get close
+    const edt = dt * ws * (e.frozen > 0 ? 0.35 : 1);
+    if (e.frozen > 0) e.frozen -= dt;
+    if (e.flash > 0) e.flash -= dt;
+    if (e.moonCd > 0) e.moonCd -= dt;
+    if (e.burn > 0) {
+      e.burn -= dt;
+      e.burnTick -= dt;
+      if (e.burnTick <= 0) { e.burnTick += 1; damageEnemy(e, 1); if (!e.alive) continue; }
+    }
+    e.t += edt;
+    moveEnemy(e, edt, px, py);
+
+    if (st.repel) {                                   // Repel Field
+      const d = Math.hypot(e.x - px, e.y - py);
+      if (d < 90 && d > 0.1) { e.pvx += (e.x - px) / d * 900 * dt; e.pvy += (e.y - py) / d * 900 * dt; }
+    }
+    e.x += e.pvx * dt;
+    e.y += e.pvy * dt;
+    const drag = Math.min(1, 4 * dt);
+    e.pvx -= e.pvx * drag;
+    e.pvy -= e.pvy * drag;
+    if (!e.dyn) e.x = clamp(e.x, e.r, VIEW_W - e.r);
+    if (!e.alive || e.warn > 0) continue;
+
+    if (moon && e.moonCd <= 0 && Math.hypot(e.x - moon.x, e.y - moon.y) < e.r + 8) {   // Orbiting Moonlet
+      e.moonCd = 0.6;
+      damageEnemy(e, 1);
+      const d = Math.hypot(e.x - moon.x, e.y - moon.y) || 1;
+      e.pvx += (e.x - moon.x) / d * 250;
+      e.pvy += (e.y - moon.y) / d * 250;
+      if (!e.alive) continue;
+    }
+
+    // Bumping into you knocks you away.
+    const nx = clamp(e.x, hb.x, hb.x + hb.w), ny = clamp(e.y, hb.y, hb.y + hb.h);
+    if ((nx - e.x) ** 2 + (ny - e.y) ** 2 < e.r * e.r) {
+      const dir = px >= e.x ? 1 : -1;
+      if (hitPlayer(dir, ENEMY_KNOCK_X, ENEMY_KNOCK_Y, e)) e.pvx -= dir * 200;
+    }
+  }
+  for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].dyn && !enemies[i].alive) enemies.splice(i, 1);
+}
+
+// ---------- Confetti ----------
+// Two confetti cannons fire from the bottom corners of the screen.
+function confettiBurst() {
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 80; i++) {
+      const tilt = 0.12 + Math.random() * 0.5;            // angle away from straight up
+      const speed = 850 + Math.random() * 650;
+      confetti.push({
+        x: side < 0 ? 0 : VIEW_W, y: VIEW_H,
+        vx: -side * Math.sin(tilt) * speed, vy: -Math.cos(tilt) * speed,
+        rot: Math.random() * 6.28, spin: (Math.random() * 2 - 1) * 10,
+        flip: Math.random() * 6.28, flipSpeed: 6 + Math.random() * 8,
+        ph: Math.random() * 6.28, age: 0, life: 3.5 + Math.random() * 1.5,
+        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      });
+    }
+  }
+}
+
+function updateConfetti(dt) {
+  const drag = Math.min(1, 1.8 * dt);
+  for (let i = confetti.length - 1; i >= 0; i--) {
+    const c = confetti[i];
+    c.vx -= c.vx * drag;
+    c.vy -= c.vy * drag;
+    c.vy = Math.min(c.vy + 900 * dt, 110);                 // flutters down slowly
+    c.x += (c.vx + Math.sin(c.age * 4 + c.ph) * 30) * dt;
+    c.y += c.vy * dt;
+    c.rot += c.spin * dt;
+    c.flip += c.flipSpeed * dt;
+    c.age += dt;
+    if (c.age > c.life || c.y > VIEW_H + 20) confetti.splice(i, 1);
+  }
+}
+
+function updateEffects(dt) {
+  for (const list of [rings, zaps, texts]) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      list[i].life -= dt;
+      if (list === texts) list[i].y += 30 * dt;
+      if (list[i].life <= 0) list.splice(i, 1);
+    }
+  }
+}
+
+function touchesMoon() {
+  const cx = VIEW_W / 2, cy = MOON_Y + MOON_R;
+  const nx = clamp(cx, player.x, player.x + PLAYER_W);
+  const ny = clamp(cy, player.y, player.y + PLAYER_H);
+  return (nx - cx) ** 2 + (ny - cy) ** 2 < MOON_R * MOON_R;
+}
+
+// You dropped off the bottom of the screen. Rebound and Safety Flag can save you.
+function fellOff() {
+  const p = player, cx = p.x + PLAYER_W / 2;
+  if (st.rebounds - p.reboundsUsed > 0) {
+    p.reboundsUsed++;
+    Object.assign(p, { y: camY, vy: 1150, onGround: false, standOn: null, stun: 0, diving: false, jumping: false, dashTime: 0 });
+    p.airJumpsLeft = st.airJumps;
+    p.dashReady = true;
+    ring(cx, camY + 10, 60, "195,155,255");
+    floatText(cx, camY + 70, "BOING!", "#c39bff");
+    return;
+  }
+  if (st.safetyFlag && !p.flagUsed) {
+    p.flagUsed = true;
+    const L = p.lastLedge;
+    const x = L.kind === "ground" ? VIEW_W / 2 - PLAYER_W / 2 : L.x + L.w / 2 - PLAYER_W / 2;
+    Object.assign(p, { x, y: L.y, vx: 0, vy: 0, onGround: true, standOn: L, landY: L.y, stun: 0, diving: false, invuln: 1.5 });
+    camY = Math.max(CAM_MIN, L.y - VIEW_H * 0.42);
+    floatText(x + PLAYER_W / 2, L.y + 60, "SAVED!", "#c39bff");
+    return;
+  }
+  endRun(false);
+}
+
+function update(dt) {
+  if (state === "playing") {
+    const p = player;
+    runTime += dt;
+    if (timeSlow > 0) timeSlow -= dt;
+    for (const k of ["timeCd", "blinkCd", "cloudCd", "invuln", "starTime", "spellTime", "domeTime"]) if (p[k] > 0) p[k] -= dt;
+    for (const k in p.spellCds) if (p.spellCds[k] > 0) p.spellCds[k] -= dt;
+    if (st.shield && !p.shieldReady) { p.shieldTimer -= dt; if (p.shieldTimer <= 0) p.shieldReady = true; }
+    updateMovers(dt);
+    updateTempPlats(dt);
+    updatePlayer(dt);
+    updateDog(dt);
+    checkSweepers();
+    updateBlaster(dt);
+    updateEnemies(dt);
+    updatePoppies(dt);
+    maxHeightPx = Math.max(maxHeightPx, p.y);
+
+    // Camera follows you up, but never comes back down. It also keeps the last
+    // platform you stood on in view, so a big jump can't scroll it away.
+    if (bossActive()) {
+      camY += (boss.camY - camY) * Math.min(1, dt * 4);       // the screen locks onto the boss arena
+    } else {
+      let target = Math.min(p.y - VIEW_H * 0.42, p.landY - 40);
+      if (boss.phase === "waiting") target = Math.min(target, boss.camY);
+      if (target > camY) camY += (target - camY) * Math.min(1, dt * 6);
+    }
+
+    if (mode === "sandbox") {                   // your own level: reach the goal star
+      if (touchesGoal()) sandboxEnd(true);
+      else if (p.y + PLAYER_H < camY - 4) sandboxEnd(false);
+    } else {
+    if (!confettiDone && maxHeightPx >= CONFETTI_AT) { confettiDone = true; confettiBurst(); }
+    // Entering a new section: show its name, and the dog learns a new spell
+    const si = sectionAt(p.y / PX_PER_M);
+    if (si > sectionReached) {
+      sectionReached = si;
+      sectionFlash = 3.5;
+      newSpell = "";
+      if (SPELLS[si] && !p.spells.includes(si)) {
+        p.spells.push(si);
+        p.spellSel = p.spells.length - 1;
+        newSpell = SPELLS[si].name;
+      }
+    }
+    if (sectionFlash > 0) sectionFlash -= dt;
+    updateSections(dt);
+    updateBoss(dt);
+
+    const best = scores[0];
+    if (!passedRecord && best && !best.moon && Math.floor(maxHeightPx / PX_PER_M) > best.height) {
+      passedRecord = true;
+      recordFlash = 2.5;
+    }
+    if (recordFlash > 0) recordFlash -= dt;
+
+    // Every 100 m: time to pick an upgrade
+    const reached = Math.floor(maxHeightPx / (UPGRADE_EVERY_M * PX_PER_M));
+    while (milestonesDone < reached && (milestonesDone + 1) * UPGRADE_EVERY_M < MOON_METERS) {
+      milestonesDone++;
+      pendingPicks++;
+      onMilestone();
+    }
+
+    if (touchesMoon()) endRun(true);
+    else if (p.y + PLAYER_H < camY - 4) fellOff();
+    if (state === "playing" && pendingPicks > 0) openChoice();
+    }
+  }
+  if (state === "editor") {
+    const dir = (keys.ArrowUp || keys.KeyW ? 1 : 0) - (keys.ArrowDown || keys.KeyS ? 1 : 0);
+    ed.camY = clamp(ed.camY + dir * 700 * dt, CAM_MIN, EDIT_MAX_Y - VIEW_H + 200);
+    camY = ed.camY;
+    if (ed.msgT > 0) ed.msgT -= dt;
+  }
+  if (state === "credits") creditsT += dt;
+  if (state === "choose" && choice.delay > 0) choice.delay -= dt;
+  if (state === "over" && overTimer > 0) overTimer -= dt;
+  if (state !== "paused" && state !== "choose") {
+    updateConfetti(dt);
+    updateEffects(dt);
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const q = particles[i];
+    q.x += q.vx * dt;
+    q.y += q.vy * dt;
+    q.vy -= 200 * dt;
+    q.life -= dt;
+    if (q.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// =====================================================================
+//  DRAWING
+// =====================================================================
+function drawSky() {
+  const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  g.addColorStop(0, rgb(gradientAt(SKY, (camY + VIEW_H) / PX_PER_M)));
+  g.addColorStop(1, rgb(gradientAt(SKY, camY / PX_PER_M)));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+}
+
+function drawStars(t) {
+  const vis = clamp(((camY + VIEW_H / 2) / PX_PER_M - 560) / 80, 0, 1);    // stars come out at the aurora
+  if (vis <= 0) return;
+  for (const s of stars) {
+    const sy = (s.y + camY * s.d) % VIEW_H;
+    ctx.fillStyle = `rgba(255,255,255,${vis * (0.55 + 0.45 * Math.sin(t * s.sp + s.ph))})`;
+    ctx.fillRect(s.x, sy, s.r, s.r);
+  }
+}
+
+function drawMoon() {
+  // Far away the Moon hangs small in the sky; it grows as you climb,
+  // then becomes the real thing you can touch at the top.
+  const HANG_Y = 120;
+  const realY = toScreenY(MOON_Y + MOON_R);
+  let cy, r;
+  if (realY >= HANG_Y) { cy = realY; r = MOON_R; }
+  else { cy = HANG_Y; r = MOON_R / (1 + (HANG_Y - realY) / 1400); }
+  const cx = VIEW_W / 2;
+
+  const glow = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r * 2.2);
+  glow.addColorStop(0, "rgba(255,250,220,0.35)");
+  glow.addColorStop(1, "rgba(255,250,220,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  const body = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
+  body.addColorStop(0, "#fffbe8");
+  body.addColorStop(1, "#cfc8b0");
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(150,140,115,0.35)";
+  for (const c of craters) {
+    ctx.beginPath();
+    ctx.arc(cx + c.dx * r, cy + c.dy * r, c.r * r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawClouds(t) {
+  const alpha = clamp(1 - (camY / PX_PER_M - 280) / 60, 0, 1) * 0.9;      // clouds end at the storm
+  if (alpha <= 0) return;
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  for (const c of clouds) {
+    const sy = VIEW_H - (c.py - camY * 0.5);
+    if (sy < -60 || sy > VIEW_H + 60) continue;
+    const x = ((c.x + t * c.speed) % (VIEW_W + 160)) - 80;
+    const s = c.s;
+    ctx.beginPath();
+    ctx.arc(x, sy, 22 * s, 0, Math.PI * 2);
+    ctx.arc(x + 22 * s, sy - 9 * s, 19 * s, 0, Math.PI * 2);
+    ctx.arc(x + 44 * s, sy, 21 * s, 0, Math.PI * 2);
+    ctx.arc(x + 22 * s, sy + 6 * s, 20 * s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ---------- Section backgrounds and weather (Round 7) ----------
+function sectionWeight(i) {                 // 1 inside the section, fading out near its edges
+  const m = (camY + VIEW_H / 2) / PX_PER_M, s = SECTIONS[i];
+  const below = i === 0 ? 1 : clamp((m - s.from + 40) / 80, 0, 1);
+  const above = i === SECTIONS.length - 1 ? 1 : clamp((s.to - m + 40) / 80, 0, 1);
+  return below * above;
+}
+
+function drawBackItem(b, x, sy, t) {
+  const s = b.s;
+  const circle = (cx, cy, r) => { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); };
+  switch (b.kind) {
+    case "hill":
+      ctx.fillStyle = b.sec % 2 ? "rgba(70,150,80,0.9)" : "rgba(90,170,95,0.9)";
+      ctx.beginPath(); ctx.ellipse(b.x, sy + 70, 130 * s, 80 * s, 0, Math.PI, 0); ctx.fill();
+      ctx.fillRect(b.x - 130 * s, sy + 69, 260 * s, VIEW_H);
+      break;
+    case "castle":
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      for (const [dx, h] of [[-26, 60], [0, 85], [26, 60]]) ctx.fillRect(x + dx * s - 9 * s, sy - h * s, 18 * s, h * s);
+      ctx.fillStyle = "rgba(255,190,225,0.7)";
+      for (const [dx, h] of [[-26, 60], [0, 85], [26, 60]]) {
+        ctx.beginPath(); ctx.moveTo(x + dx * s - 11 * s, sy - h * s); ctx.lineTo(x + dx * s, sy - (h + 18) * s);
+        ctx.lineTo(x + dx * s + 11 * s, sy - h * s); ctx.fill();
+      }
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      for (let i = -2; i <= 2; i++) circle(x + i * 18 * s, sy + 4, 16 * s);
+      break;
+    case "thunderhead":
+      ctx.fillStyle = "rgba(38,42,58,0.85)";
+      for (const [dx, dy, r] of [[-30, 6, 24], [0, -8, 32], [30, 4, 26], [8, 14, 26]]) circle(x + dx * s, sy + dy * s, r * s);
+      break;
+    case "island":
+      ctx.fillStyle = "rgba(110,90,80,0.75)";
+      ctx.beginPath(); ctx.moveTo(x - 34 * s, sy); ctx.lineTo(x + 34 * s, sy); ctx.lineTo(x, sy + 40 * s); ctx.fill();
+      ctx.fillStyle = "rgba(110,190,110,0.8)";
+      ctx.fillRect(x - 34 * s, sy - 5 * s, 68 * s, 6 * s);
+      circle(x + 10 * s, sy - 16 * s, 9 * s);
+      break;
+    case "ribbon":
+      for (const [color, off] of [["rgba(120,255,200,0.22)", 0], ["rgba(190,120,255,0.18)", 22]]) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 16 * s;
+        ctx.beginPath();
+        for (let xx = -20; xx <= VIEW_W + 20; xx += 20) {
+          ctx.lineTo(xx, sy + off + Math.sin(xx * 0.018 + t * 0.7 + b.ph) * 22);
+        }
+        ctx.stroke();
+      }
+      break;
+    case "satellite":
+      ctx.save();
+      ctx.translate(x, sy);
+      ctx.rotate(t * 0.3 + b.ph);
+      ctx.fillStyle = "rgba(90,130,220,0.85)";
+      ctx.fillRect(-26 * s, -4 * s, 16 * s, 8 * s);
+      ctx.fillRect(10 * s, -4 * s, 16 * s, 8 * s);
+      ctx.fillStyle = "rgba(200,205,215,0.9)";
+      ctx.fillRect(-9 * s, -6 * s, 18 * s, 12 * s);
+      ctx.restore();
+      break;
+    case "sun": {
+      const sx = VIEW_W - 40, r = 140;
+      const g = ctx.createRadialGradient(sx, sy, r * 0.3, sx, sy, r * 1.8);
+      g.addColorStop(0, "rgba(255,230,120,0.9)");
+      g.addColorStop(0.55, "rgba(255,140,40,0.55)");
+      g.addColorStop(1, "rgba(255,90,30,0)");
+      ctx.fillStyle = g;
+      circle(sx, sy, r * 1.8);
+      ctx.fillStyle = "#ffcf4a";
+      circle(sx, sy, r);
+      ctx.fillStyle = "rgba(230,120,30,0.5)";
+      circle(sx - 50, sy - 30, 14);
+      circle(sx - 20, sy + 50, 10);
+      break;
+    }
+    case "rock":
+      ctx.fillStyle = "rgba(110,95,85,0.8)";
+      circle(x, sy, 9 * s);
+      ctx.fillStyle = "rgba(70,60,55,0.8)";
+      circle(x + 3 * s, sy - 2 * s, 3 * s);
+      break;
+    case "earth":
+      ctx.fillStyle = "#3f7fe0";
+      circle(90, sy, 40);
+      ctx.fillStyle = "#5cc04a";
+      circle(78, sy - 10, 14);
+      circle(104, sy + 12, 11);
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.fillRect(66, sy + 20, 30, 4);
+      break;
+  }
+}
+
+function drawBackdrop(t) {
+  const weights = SECTIONS.map((_, i) => sectionWeight(i));
+  for (const b of backdrop) {
+    const w = weights[b.sec];
+    if (w <= 0) continue;
+    const sy = VIEW_H - (b.py - camY * BACK_P);
+    if (sy < -300 || sy > VIEW_H + 300) continue;
+    const span = VIEW_W + 200;
+    const x = (((b.x + t * b.speed) % span) + span) % span - 100;
+    ctx.save();
+    ctx.globalAlpha = w;
+    drawBackItem(b, x, sy, t);
+    ctx.restore();
+  }
+}
+
+// Rain in the storm, streaks in the wind, and lightning.
+function drawWeather(t) {
+  const rain = sectionWeight(2), windW = sectionWeight(3);
+  if (rain > 0) {
+    ctx.strokeStyle = `rgba(190,210,255,${0.35 * rain})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < 60; i++) {
+      const x = (i * 53 + t * 80) % VIEW_W, y = (i * 97 + t * 620) % VIEW_H;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 3, y + 12);
+    }
+    ctx.stroke();
+  }
+  if (windW > 0) {
+    const blowing = mode === "main" && wind.phase === "blow";
+    const speed = blowing ? 900 * wind.dir : 160;
+    ctx.strokeStyle = `rgba(255,255,255,${(blowing ? 0.45 : 0.18) * windW})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 26; i++) {
+      const x = (((i * 71 + t * speed) % (VIEW_W + 60)) + VIEW_W + 60) % (VIEW_W + 60) - 30;
+      const y = (i * 131) % VIEW_H;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + 24, y);
+    }
+    ctx.stroke();
+  }
+  if (mode !== "main") return;
+  if (storm.warn > 0) {
+    ctx.save();
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = `rgba(255,255,190,${0.3 + 0.25 * Math.sin(t * 40)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(storm.x, 0); ctx.lineTo(storm.x, VIEW_H); ctx.stroke();
+    ctx.restore();
+    txt("!", storm.x, 60, 18, "#ffd447", "center");
+  } else if (storm.strike > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${0.35 * storm.strike / 0.25})`;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    for (const [color, width] of [["#ffe680", 7], ["#ffffff", 3]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let y = 0; y <= VIEW_H; y += 40) ctx.lineTo(storm.x + Math.sin(y * 0.7 + t * 50) * 10, y);
+      ctx.stroke();
+    }
+  }
+}
+
+// The boss gate on the ledge, and the glowing barrier that blocks the way up.
+function drawBossArena(t) {
+  if (boss.phase === "none" || !boss.gate) return;
+  const g = boss.gate, gy = toScreenY(boss.ledge.y);
+  const open = boss.phase !== "waiting";
+  ctx.fillStyle = "#4a4458";                         // stone arch
+  rr(g.x - 6, gy - g.h - 8, g.w + 12, g.h + 8, 10);
+  ctx.fill();
+  const swirl = ctx.createRadialGradient(g.x + g.w / 2, gy - g.h / 2, 2, g.x + g.w / 2, gy - g.h / 2, g.w);
+  swirl.addColorStop(0, open ? "#2a2238" : "#ffd447");
+  swirl.addColorStop(0.5 + 0.2 * Math.sin(t * 4), open ? "#1a1626" : "#ff7a2a");
+  swirl.addColorStop(1, open ? "#120f1a" : "#7a2a8a");
+  ctx.fillStyle = swirl;
+  rr(g.x, gy - g.h, g.w, g.h, 8);
+  ctx.fill();
+  if (boss.phase === "waiting") {
+    txt("BOSS GATE", g.x + g.w / 2, gy - g.h - 24, 7, "#ffd447", "center");
+    ctx.fillStyle = "#ffd447";                       // bouncing arrow
+    const ay = gy - g.h - 34 + Math.sin(t * 6) * 4;
+    ctx.beginPath(); ctx.moveTo(g.x + g.w / 2 - 6, ay - 8); ctx.lineTo(g.x + g.w / 2 + 6, ay - 8); ctx.lineTo(g.x + g.w / 2, ay); ctx.fill();
+  }
+  if (barrierUp()) {
+    const by = toScreenY(boss.ceiling);
+    if (by > -20 && by < VIEW_H + 20) {
+      const glow = ctx.createLinearGradient(0, by - 16, 0, by + 16);
+      glow.addColorStop(0, "rgba(255,90,60,0)");
+      glow.addColorStop(0.5, `rgba(255,90,60,${0.55 + 0.25 * Math.sin(t * 8)})`);
+      glow.addColorStop(1, "rgba(255,90,60,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, by - 16, VIEW_W, 32);
+      txt("BEAT THE BOSS TO GO ON", VIEW_W / 2, by + 14, 7, "#ffb3a8", "center");
+    }
+  }
+}
+
+// A soft glow marks a boundary: blue for the edge of space, red for the danger zone.
+function drawEdgeGlow(y, color) {
+  const sy = toScreenY(y);
+  if (sy < -60 || sy > VIEW_H + 60) return;
+  const g = ctx.createLinearGradient(0, sy - 50, 0, sy + 50);
+  g.addColorStop(0, `rgba(${color},0)`);
+  g.addColorStop(0.5, `rgba(${color},0.22)`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, sy - 50, VIEW_W, 100);
+}
+
+function drawConfetti() {
+  for (const c of confetti) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (c.life - c.age) / 0.6);
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.scale(1, Math.cos(c.flip));                         // tumbling flip
+    ctx.fillStyle = c.color;
+    ctx.fillRect(-4.5, -3, 9, 6);
+    ctx.restore();
+  }
+}
+
+function drawRecordLines() {
+  const colors = ["#ffd447", "#d7dde8", "#e39a5a"];
+  for (let i = 0; i < Math.min(3, scores.length); i++) {
+    const s = scores[i];
+    if (s.moon) continue;
+    const sy = toScreenY(s.height * PX_PER_M);
+    if (sy < -20 || sy > VIEW_H + 20) continue;
+    ctx.save();
+    ctx.strokeStyle = colors[i];
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(0, sy);
+    ctx.lineTo(VIEW_W, sy);
+    ctx.stroke();
+    ctx.restore();
+    txt(`#${i + 1} ${s.initials} ${s.height} m`, VIEW_W - 22, sy - 13, 8, colors[i], "right");
+  }
+}
+
+function drawGround(sy) {
+  ctx.fillStyle = "#6b4528";
+  ctx.fillRect(0, sy, VIEW_W, VIEW_H - sy + 2);
+  ctx.fillStyle = "#5cc04a";
+  ctx.fillRect(0, sy, VIEW_W, 10);
+  ctx.fillStyle = "#4aa53b";
+  ctx.fillRect(0, sy + 10, VIEW_W, 3);
+}
+
+function drawSign(s, sy) {
+  const label = s.kind === "pad" ? "LAST JUMP!" : `${s.mark} m`;
+  ctx.font = `8px ${FONT}`;
+  const w = ctx.measureText(label).width + 14;
+  const x = s.x + 12;
+  ctx.fillStyle = "#5a3d24";
+  ctx.fillRect(x + w / 2 - 2, sy - 22, 4, 22);
+  ctx.fillStyle = "#f3e3c0";
+  rr(x, sy - 38, w, 18, 3);
+  ctx.fill();
+  ctx.strokeStyle = "#5a3d24";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  txtPlain(label, x + w / 2, sy - 33, 8, "#3a2614", "center");
+}
+
+function drawSweeper(s, sy) {
+  const sw = s.sweeper, x = sw.x, y = sy - SWEEPER_H;
+  const frozen = sw.frozen > 0;
+  ctx.fillStyle = "rgba(0,0,0,0.35)";                         // the track it runs along
+  ctx.fillRect(s.x + 3, sy + 1, s.w - 6, 2);
+  if (!frozen) {
+    ctx.fillStyle = "rgba(255,212,71,0.25)";                  // speed streak behind it
+    ctx.fillRect(sw.dir > 0 ? x - 10 : x + SWEEPER_W, y + 3, 10, SWEEPER_H - 6);
+  }
+  ctx.save();
+  rr(x, y, SWEEPER_W, SWEEPER_H, 3);
+  ctx.fillStyle = frozen ? "#bfefff" : "#ffd447";
+  ctx.fill();
+  ctx.clip();
+  ctx.strokeStyle = frozen ? "#4a8fb0" : "#1a1a1a";
+  ctx.lineWidth = 3;
+  for (let k = -SWEEPER_H; k < SWEEPER_W + SWEEPER_H; k += 7) {
+    ctx.beginPath();
+    ctx.moveTo(x + k, y + SWEEPER_H);
+    ctx.lineTo(x + k + SWEEPER_H, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+  rr(x, y, SWEEPER_W, SWEEPER_H, 3);
+  ctx.strokeStyle = frozen ? "#2a6f90" : "#5a4300";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawPlatform(s, time) {
+  const sy = toScreenY(s.y);
+  if (sy < -40 || sy > VIEW_H + 20) return;
+  if (s.kind === "ground") { drawGround(sy); return; }
+  const t = s.y / PX_PER_M;
+  if (!solidNow(s)) {                                         // blinked out or crumbled away: just a faint outline
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 2;
+    rr(s.x, sy, s.w, 14, 5);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (s.bouncy) {                                             // bouncy cloud
+    ctx.fillStyle = "#ffffff";
+    rr(s.x, sy + 2, s.w, 11, 5);
+    ctx.fill();
+    for (let i = 0; i <= 3; i++) {
+      ctx.beginPath();
+      ctx.arc(s.x + 8 + i * (s.w - 16) / 3, sy + 3, 7 + Math.sin(time * 4 + i + s.x) * 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "rgba(170,190,255,0.5)";
+    ctx.fillRect(s.x + 4, sy + 10, s.w - 8, 3);
+    return;
+  }
+  ctx.save();
+  if (s.blink) {                                              // flickers just before it blinks out
+    const ph = (runTime + s.blinkPh) % BLINK_CYCLE;
+    if (ph > BLINK_ON - 0.5) ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(time * 25));
+  }
+  if (s.crumbleT > 0) ctx.translate((Math.random() - 0.5) * 3, 0);   // shaking before it falls
+  if (s.amp) {                                                // thrusters under moving platforms
+    const flick = 0.55 + 0.45 * Math.sin(time * 30 + s.phase);
+    ctx.fillStyle = `rgba(120,220,255,${0.5 * flick})`;
+    for (const ex of [s.x + 8, s.x + s.w - 8]) {
+      ctx.beginPath();
+      ctx.ellipse(ex, sy + 17, 4, 5 + 3 * flick, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.fillStyle = rgb(gradientAt(PLAT_BODY, t));
+  rr(s.x, sy, s.w, 14, 5);
+  ctx.fill();
+  ctx.fillStyle = rgb(gradientAt(PLAT_TOP, t));
+  rr(s.x, sy, s.w, 5, 3);
+  ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.fillRect(s.x + 5, sy + 10, s.w - 10, 2);
+  if (s.crumble) {                                            // cracks: this one will crumble
+    ctx.strokeStyle = "rgba(20,20,30,0.7)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(s.x + s.w * 0.3, sy);
+    ctx.lineTo(s.x + s.w * 0.36, sy + 6);
+    ctx.lineTo(s.x + s.w * 0.3, sy + 13);
+    ctx.moveTo(s.x + s.w * 0.7, sy);
+    ctx.lineTo(s.x + s.w * 0.64, sy + 7);
+    ctx.stroke();
+  }
+  if (s.blink) {                                              // a soft aurora glow
+    ctx.fillStyle = "rgba(120,255,200,0.25)";
+    rr(s.x - 3, sy - 3, s.w + 6, 20, 8);
+    ctx.fill();
+  }
+  ctx.restore();
+  if (s.kind === "ledge" || s.kind === "pad") drawSign(s, sy);
+  if (s.sweeper) drawSweeper(s, sy);
+}
+
+function drawCloudPlat(c) {
+  const sy = toScreenY(c.y);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, c.life);
+  if (c.kind === "bubble") {                                  // the dog's Bubble Bounce
+    ctx.fillStyle = "rgba(150,220,255,0.55)";
+    ctx.beginPath();
+    ctx.ellipse(c.x + c.w / 2, sy + 6, c.w / 2, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.fillRect(c.x + c.w * 0.3, sy + 1, 8, 3);
+    ctx.restore();
+    return;
+  }
+  if (c.kind === "rainbow") {                                 // the dog's Rainbow Bridge
+    ["#ff5a5a", "#ff9f40", "#ffd447", "#7dff7a", "#5a9bff", "#a565f0"].forEach((col, i) => {
+      ctx.fillStyle = col;
+      ctx.fillRect(c.x, sy + i * 2.5, c.w, 2.5);
+    });
+    ctx.restore();
+    return;
+  }
+  ctx.fillStyle = "#ffffff";
+  rr(c.x, sy, c.w, 10, 5);
+  ctx.fill();
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.arc(c.x + 12 + i * (c.w - 24) / 3, sy + 2, 9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawParticles() {
+  for (const q of particles) {
+    const a = q.life / q.max;
+    ctx.fillStyle = `rgba(${q.color},${0.7 * a})`;
+    ctx.beginPath();
+    ctx.arc(q.x, toScreenY(q.y), 1.5 + 2 * a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawPoppy(f, t) {
+  const sy = toScreenY(f.y);
+  if (sy < -40 || sy > VIEW_H + 30) return;
+  const hx = f.x + Math.sin(t * 1.6 + f.ph) * 2, hy = sy - 20;
+  ctx.strokeStyle = "#3f8f3a";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(f.x, sy);
+  ctx.quadraticCurveTo(f.x - 2, sy - 10, hx, hy);
+  ctx.stroke();
+  ctx.fillStyle = "#4fae45";
+  ctx.beginPath();
+  ctx.ellipse(f.x + 4, sy - 7, 5, 2.2, -0.6, 0, Math.PI * 2);
+  ctx.fill();
+  // Petals shrink right after shooting, then grow back.
+  const grow = 1 - 0.6 * clamp(f.cool / POPPY_COOLDOWN, 0, 1);
+  const pr = 6.5 * grow * (1 + f.bounce * 0.35);
+  ctx.fillStyle = "#e8322b";
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + 0.4;
+    ctx.beginPath();
+    ctx.arc(hx + Math.cos(a) * pr * 0.75, hy + Math.sin(a) * pr * 0.75, pr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#2a1414";
+  ctx.beginPath();
+  ctx.arc(hx, hy, 2.6, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPetal(x, y, rot, size, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.fillStyle = "#ee3a2f";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 6 * size, 3.8 * size, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#7a1010";
+  ctx.beginPath();
+  ctx.arc(-3.6 * size, 0, 1.6 * size, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPetals() {
+  for (const q of petals) {
+    drawPetal(q.x, toScreenY(q.y), q.rot, 1.3, Math.min(1, (PETAL_LIFE - q.age) / 0.8));
+  }
+}
+
+function drawEnemy(e, t) {
+  const sy = toScreenY(e.y);
+  if (sy < -40 || sy > VIEW_H + 40) return;
+  const r = e.r;
+  // Eyes look at you.
+  const lx = player.x + PLAYER_W / 2 - e.x, ly = -(player.y + PLAYER_H / 2 - e.y);
+  const ld = Math.hypot(lx, ly) || 1;
+  const ex = lx / ld * 1.6, ey = ly / ld * 1.6;
+  const eyes = (y, gap, size, angry) => {
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(s * gap, y, size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1a1030";
+      ctx.beginPath();
+      ctx.arc(s * gap + ex, y + ey, size * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      if (angry) {
+        ctx.strokeStyle = "#1a1030";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(s * (gap + size), y - size - 2);
+        ctx.lineTo(s * (gap - size * 0.6), y - size + 1);
+        ctx.stroke();
+      }
+    }
+  };
+
+  if (e.warn > 0) {                                  // a flare is coming: blinking arrow at the right edge
+    if (Math.floor(e.warn * 8) % 2 === 0) {
+      ctx.fillStyle = "#ff9f40";
+      ctx.beginPath();
+      ctx.moveTo(VIEW_W - 22, sy);
+      ctx.lineTo(VIEW_W - 6, sy - 9);
+      ctx.lineTo(VIEW_W - 6, sy + 9);
+      ctx.closePath();
+      ctx.fill();
+    }
+    return;
+  }
+  ctx.save();
+  ctx.translate(e.x, sy);
+  if (e.type === "boss") {                           // THE SUN KING
+    const angry = e.hp <= e.maxHp / 2;
+    ctx.fillStyle = angry ? "#ff5a3a" : "#ffb347";
+    for (let i = 0; i < 12; i++) {                   // flickering flames all around
+      const a = i * Math.PI / 6 + t * 1.5, len = r + 10 + Math.sin(t * 12 + i * 1.7) * 6;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a - 0.22) * r * 0.9, Math.sin(a - 0.22) * r * 0.9);
+      ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+      ctx.lineTo(Math.cos(a + 0.22) * r * 0.9, Math.sin(a + 0.22) * r * 0.9);
+      ctx.fill();
+    }
+    const g = ctx.createRadialGradient(-8, -8, 4, 0, 0, r);
+    g.addColorStop(0, "#fff3b0");
+    g.addColorStop(1, angry ? "#ff7a2a" : "#ffb02e");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd447";                       // crown
+    ctx.beginPath();
+    ctx.moveTo(-18, -r + 4); ctx.lineTo(-18, -r - 14); ctx.lineTo(-9, -r - 4); ctx.lineTo(0, -r - 18);
+    ctx.lineTo(9, -r - 4); ctx.lineTo(18, -r - 14); ctx.lineTo(18, -r + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ff5a5a";
+    ctx.beginPath(); ctx.arc(0, -r - 6, 3, 0, Math.PI * 2); ctx.fill();
+    eyes(-6, 11, 6, true);
+    ctx.strokeStyle = "#5a1a0a";                     // grumpy mouth
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 18, 9, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+  } else if (e.type === "asteroid") {
+    ctx.rotate(e.t * e.spin);
+    ctx.fillStyle = "#8a7864";
+    ctx.beginPath();
+    for (let i = 0; i < 9; i++) {
+      const a = i * Math.PI * 2 / 9, rad = r * (0.8 + 0.2 * Math.sin(i * 2.7 + e.ph));
+      ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(60,48,40,0.6)";
+    ctx.beginPath(); ctx.arc(-r * 0.3, -r * 0.2, r * 0.25, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(r * 0.35, r * 0.3, r * 0.18, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === "flare") {
+    ctx.rotate(Math.atan2(e.vy, -e.vx));             // tail trails behind it
+    const tail = ctx.createLinearGradient(0, 0, 40, 0);
+    tail.addColorStop(0, "rgba(255,170,60,0.8)");
+    tail.addColorStop(1, "rgba(255,90,40,0)");
+    ctx.fillStyle = tail;
+    ctx.beginPath(); ctx.ellipse(18, 0, 22, r * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd447";
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(-2, -2, r * 0.45, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === "grumble") {
+    ctx.fillStyle = "#6d6a8c";
+    for (const [cx, cy, cr] of [[-r * 0.55, 3, r * 0.6], [r * 0.55, 3, r * 0.6], [0, -r * 0.25, r * 0.75], [0, 4, r * 0.7]]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    eyes(-1, 5, 3.4, true);
+  } else if (e.type === "buzzer") {
+    const flap = Math.abs(Math.sin(t * 40 + e.ph));
+    ctx.fillStyle = "rgba(220,240,255,0.75)";
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(s * 4, -r * 0.9, 4, 7 * flap + 2, s * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#f2d046";
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = "#2a2a2a";
+    ctx.fillRect(-r * 0.35, -r, 4, r * 2);
+    ctx.fillRect(r * 0.25, -r, 4, r * 2);
+    ctx.restore();
+    eyes(-2, 4, 2.8, false);
+  } else if (e.type === "swooper") {
+    const flap = Math.sin(t * (e.mode === "dive" ? 30 : 12) + e.ph) * 7;
+    ctx.fillStyle = "#2f418f";
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(s * 5, 0);
+      ctx.lineTo(s * (r + 9), -6 + flap);
+      ctx.lineTo(s * (r + 2), 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = "#4f69d2";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.8, r, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ff9f40";
+    ctx.beginPath();
+    ctx.moveTo(-4, 4);
+    ctx.lineTo(4, 4);
+    ctx.lineTo(0, 11);
+    ctx.closePath();
+    ctx.fill();
+    eyes(-3, 4, 3, true);
+  } else {
+    ctx.strokeStyle = "rgba(255,170,215,0.8)";
+    ctx.lineWidth = 2;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * 5, 2);
+      for (let k = 1; k <= 4; k++) ctx.lineTo(i * 5 + Math.sin(t * 4 + k + i) * 3, 2 + k * 5);
+      ctx.stroke();
+    }
+    const g = ctx.createRadialGradient(0, -4, 2, 0, -2, r);
+    g.addColorStop(0, "rgba(255,220,240,0.95)");
+    g.addColorStop(1, "rgba(255,120,190,0.75)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 2, r, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+    eyes(-4, 5, 2.6, false);
+  }
+  if (e.frozen > 0) {
+    ctx.strokeStyle = "rgba(140,220,255,0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (e.burn > 0) {
+    ctx.fillStyle = `rgba(255,140,40,${0.25 + 0.2 * Math.sin(t * 20)})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (e.flash > 0) {
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (e.hp < e.maxHp && !e.boss) {
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(-12, -r - 10, 24, 4);
+    ctx.fillStyle = "#ff5a5a";
+    ctx.fillRect(-12, -r - 10, 24 * e.hp / e.maxHp, 4);
+  }
+  ctx.restore();
+}
+
+function drawShots() {
+  for (const s of shots) {
+    const sy = toScreenY(s.y);
+    const color = s.big ? "255,107,213" : s.drone ? "143,227,255" : "255,224,102";
+    ctx.fillStyle = `rgba(${color},0.3)`;
+    ctx.beginPath();
+    ctx.arc(s.x, sy, s.size * 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgb(${color})`;
+    ctx.beginPath();
+    ctx.arc(s.x, sy, s.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawEffects() {
+  for (const g of rings) {
+    const k = 1 - g.life / 0.35;
+    ctx.strokeStyle = `rgba(${g.color},${1 - k})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(g.x, toScreenY(g.y), g.r * (0.3 + 0.7 * k), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  for (const z of zaps) {
+    ctx.strokeStyle = `rgba(140,230,255,${z.life / 0.2})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(z.x1, toScreenY(z.y1));
+    for (let k = 1; k < 5; k++) {
+      ctx.lineTo(lerp(z.x1, z.x2, k / 5) + (Math.random() - 0.5) * 10, toScreenY(lerp(z.y1, z.y2, k / 5)) + (Math.random() - 0.5) * 10);
+    }
+    ctx.lineTo(z.x2, toScreenY(z.y2));
+    ctx.stroke();
+  }
+  for (const f of texts) {
+    ctx.globalAlpha = Math.min(1, f.life / 0.4);
+    txt(f.str, f.x, toScreenY(f.y), 8, f.color, "center");
+    ctx.globalAlpha = 1;
+  }
+}
+
+// The astronaut, in your character's colors and hat. Drawn facing right with
+// the feet at (0, 0); the caller moves, flips and sizes it.
+function drawAstronaut(c, air, swing) {
+  const suit = PALETTE[c.suit], black = [0, 0, 0], white = [255, 255, 255];
+
+  ctx.fillStyle = PALETTE[c.pack];                        // backpack
+  rr(-13, -22, 6, 13, 2);
+  ctx.fill();
+
+  ctx.fillStyle = mixHex(suit, black, 0.15);              // legs
+  rr(-7, -9 - (air ? 2 : Math.max(0, swing)), 5, 9, 2);
+  ctx.fill();
+  rr(2, -9 - (air ? 3 : Math.max(0, -swing)), 5, 9, 2);
+  ctx.fill();
+
+  ctx.fillStyle = suit;                                   // body
+  ctx.strokeStyle = mixHex(suit, black, 0.4);
+  ctx.lineWidth = 1.5;
+  rr(-10, -23, 20, 16, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ff6b5a";
+  ctx.fillRect(1, -18, 4, 3);
+
+  ctx.fillStyle = "#59617a";                              // blaster
+  ctx.fillRect(6, -16, 9, 4);
+
+  ctx.fillStyle = suit;                                   // helmet + visor
+  ctx.beginPath();
+  ctx.arc(0, -27, 9.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  const vg = ctx.createLinearGradient(0, -32, 0, -22);
+  vg.addColorStop(0, mixHex(PALETTE[c.visor], white, 0.45));
+  vg.addColorStop(1, mixHex(PALETTE[c.visor], black, 0.55));
+  ctx.fillStyle = vg;
+  rr(0, -31, 9, 8, 3.5);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.fillRect(3, -30, 2, 2);
+  drawHat(c);
+}
+
+function drawHat(c) {
+  const hc = PALETTE[c.hatColor], dark = mixHex(hc, [0, 0, 0], 0.35);
+  const poly = (pts, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(...pts[0]);
+    for (const pt of pts.slice(1)) ctx.lineTo(...pt);
+    ctx.closePath();
+    ctx.fill();
+  };
+  const dot = (x, y, r, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
+  switch (HATS[c.hat]) {
+    case "CAP":
+      ctx.fillStyle = hc;
+      ctx.beginPath(); ctx.arc(0, -34, 8.5, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = dark; ctx.fillRect(2, -35, 12, 3);
+      break;
+    case "CROWN":
+      poly([[-8, -34], [-8, -43], [-4, -38], [0, -45], [4, -38], [8, -43], [8, -34]], "#ffd447");
+      dot(0, -40, 1.5, "#ff5a5a");
+      break;
+    case "PARTY HAT":
+      poly([[-7, -35], [7, -35], [1, -52]], hc);
+      ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fillRect(-3, -42, 7, 2);
+      dot(1, -52, 2.5, "#ffffff");
+      break;
+    case "BOW":
+      poly([[0, -37], [-9, -42], [-9, -32]], hc);
+      poly([[0, -37], [9, -42], [9, -32]], hc);
+      dot(0, -37, 2.5, dark);
+      break;
+    case "ANTENNA":
+      ctx.strokeStyle = "#59617a"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, -36); ctx.lineTo(3, -47); ctx.stroke();
+      dot(3, -48, 3, hc);
+      break;
+    case "COWBOY HAT":
+      ctx.fillStyle = hc;
+      ctx.beginPath(); ctx.ellipse(0, -35, 15, 3, 0, 0, Math.PI * 2); ctx.fill();
+      rr(-7, -45, 14, 10, 3); ctx.fill();
+      ctx.fillStyle = dark; ctx.fillRect(-7, -38, 14, 2);
+      break;
+    case "FLOWER":
+      for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5;
+        dot(-5 + Math.cos(a) * 3.5, -36 + Math.sin(a) * 3.5, 2.8, hc);
+      }
+      dot(-5, -36, 2, "#ffd447");
+      break;
+  }
+}
+
+function drawPlayer(t) {
+  const p = player;
+  const sy = toScreenY(p.y);
+  if (sy < -60 || sy > VIEW_H + 60) return;
+  const cx = p.x + PLAYER_W / 2;
+
+  if (p.starTime > 0) {                                  // Star Power glow
+    ctx.fillStyle = `hsla(${(t * 360) % 360},100%,60%,0.35)`;
+    ctx.beginPath();
+    ctx.arc(cx, sy - 16, 26, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (st.drone) {                                        // Helper Drone
+    const dy = toScreenY(drone.y);
+    ctx.fillStyle = "#9aa3b8";
+    rr(drone.x - 8, dy - 4, 16, 8, 3);
+    ctx.fill();
+    ctx.fillStyle = "#8fe3ff";
+    ctx.fillRect(drone.x - 2, dy - 2, 4, 3);
+    ctx.strokeStyle = "rgba(255,255,255,0.7)";
+    ctx.lineWidth = 1.5;
+    const w = 9 * Math.abs(Math.sin(t * 30));
+    ctx.beginPath();
+    ctx.moveTo(drone.x - w, dy - 7);
+    ctx.lineTo(drone.x + w, dy - 7);
+    ctx.stroke();
+  }
+
+  const blink = p.invuln > 0 && p.starTime <= 0 && Math.floor(t * 12) % 2 === 0;
+  ctx.save();
+  if (blink) ctx.globalAlpha = 0.45;
+  const sq = p.squash, k = st.tiny ? 0.8 : 1;
+  ctx.translate(cx, sy);
+  ctx.scale(p.facing / Math.sqrt(sq) * k, sq * k);
+
+  const air = !p.onGround;
+  const swing = p.onGround && Math.abs(p.vx) > 20 ? Math.sin(p.walk) * 2.5 : 0;
+  drawAstronaut(currentChar(), air, swing);
+  ctx.restore();
+
+  if (st.shield && p.shieldReady) {                      // Bubble Shield
+    ctx.strokeStyle = "rgba(140,220,255,0.6)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, sy - 16, 22, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (st.moonlet) {                                      // Orbiting Moonlet
+    const m = moonletPos(), my = toScreenY(m.y);
+    ctx.fillStyle = "#d8d2bd";
+    ctx.beginPath();
+    ctx.arc(m.x, my, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(150,140,115,0.6)";
+    ctx.beginPath();
+    ctx.arc(m.x - 2, my - 1, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Saved super jumps circle your helmet.
+  for (let i = 0; i < boosts; i++) {
+    const a = t * 3 + i * (Math.PI * 2 / Math.max(3, st.boostMax));
+    drawPetal(cx + Math.cos(a) * 17, sy - 27 + Math.sin(a) * 6, a, 0.7);
+  }
+}
+
+function drawDog(t) {
+  const sy = toScreenY(dog.y) + Math.sin(t * 3) * 3;      // gentle bobbing
+  if (sy < -40 || sy > VIEW_H + 40) return;
+  drawDogAt(dog.x, sy, dog.facing, 1.1, t);
+}
+
+function drawDogAt(x, sy, facing, scale, t) {
+  const black = "#1b1b22";
+  const wingHex = PALETTE[currentChar().wings];
+  const flap = Math.sin(t * 18);
+  const wing = (x, color, lean) => {
+    ctx.save();
+    ctx.translate(x, -4);
+    ctx.rotate(lean + flap * 0.5);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(0, -6, 4, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+  const ellipse = (x, y, rx, ry, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  ctx.save();
+  ctx.translate(x, sy);
+  ctx.scale(facing * scale, scale);
+
+  wing(-4, mixHex(wingHex, [0, 0, 0], 0.25), -0.6);       // back wing
+  ctx.save();                                              // teeny crank tail, whirling
+  ctx.translate(-9, -3);
+  ctx.rotate(t * 25);
+  ctx.strokeStyle = black;
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(3.5, 0);
+  ctx.stroke();
+  ctx.restore();
+  for (const lx of [-6, -2, 3, 6]) {                       // little legs with white paws
+    ctx.fillStyle = black;
+    ctx.fillRect(lx, 3, 2.2, 4);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(lx, 6, 2.2, 1.6);
+  }
+  ellipse(0, 0, 9.5, 6, black);                            // body
+  ellipse(5, 2, 4, 3.5, "#ffffff");                        // white chest
+  wing(0, wingHex, -0.2);                                  // front wing
+
+  ellipse(10, -6, 6.5, 6.5, black);                        // head
+  for (const [a, b, c] of [[[5, -10], [4, -19], [9, -12]], [[10, -12], [13, -19], [15, -10]]]) {   // bat ears
+    ctx.fillStyle = black;
+    ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.lineTo(...c); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#f2a3b3";
+    ctx.beginPath();
+    ctx.moveTo(a[0] * 0.75 + b[0] * 0.25 + 0.5, a[1] * 0.75 + b[1] * 0.25);
+    ctx.lineTo(b[0], b[1] + 3);
+    ctx.lineTo(c[0] * 0.75 + b[0] * 0.25 - 0.5, c[1] * 0.75 + b[1] * 0.25);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = "#ffffff";                               // white blaze down the face
+  ctx.fillRect(10.5, -12.5, 2, 6);
+  ellipse(14, -4, 3.8, 2.9, "#ffffff");                    // muzzle
+  ellipse(17.2, -5, 1.4, 1.2, black);                      // nose
+  ellipse(12.5, -8, 2.4, 2.4, "#ffffff");                  // big eye
+  ellipse(12.9, -8, 1.7, 1.7, "#2a1a1a");
+  ellipse(13.4, -8.6, 0.6, 0.6, "#ffffff");
+  ctx.restore();
+}
+
+function drawSpellCloud(t) {
+  const p = player;
+  if (p.domeTime > 0) {                                     // Safety Dome
+    const cx = p.x + PLAYER_W / 2, cy = toScreenY(p.y) - 16;
+    ctx.fillStyle = "rgba(120,255,200,0.15)";
+    ctx.strokeStyle = `rgba(120,255,200,${0.6 + 0.3 * Math.sin(t * 10)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 32, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  if (p.spellTime <= 0) return;
+  const cx = p.x + PLAYER_W / 2, cy = toScreenY(p.y) - 16;
+  const fading = p.spellTime < 1 && Math.floor(t * 10) % 2 === 0;   // blinks when almost over
+  ctx.save();
+  ctx.fillStyle = "#b46bff";
+  ctx.globalAlpha = fading ? 0.08 : 0.18;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = fading ? 0.25 : 0.5;
+  for (let i = 0; i < 8; i++) {
+    const a = t * 1.5 + i * Math.PI / 4;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * 25, cy + Math.sin(a) * 25, 10 + 2 * Math.sin(t * 3 + i), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = "#ffffff";
+  for (let i = 0; i < 6; i++) {
+    ctx.fillRect(cx + Math.cos(t * 4 + i * 1.7) * 22, cy + Math.sin(t * 3 + i * 2.1) * 22, 2, 2);
+  }
+  ctx.restore();
+}
+
+function drawRadar() {
+  for (const e of enemies) {
+    if (!e.alive || e.y < camY + VIEW_H || e.y > camY + VIEW_H + 450) continue;
+    ctx.fillStyle = "rgba(255,90,90,0.85)";
+    ctx.beginPath();
+    ctx.moveTo(e.x, 4);
+    ctx.lineTo(e.x - 6, 14);
+    ctx.lineTo(e.x + 6, 14);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawAbilityHUD() {
+  const p = player, dim = "rgba(255,255,255,0.4)", on = CATEGORY.ability.color;
+  const timer = (label, t) => (t > 0 ? [`${label} ${Math.ceil(t)}`, dim] : [label, on]);
+  const lines = [];
+  const sp = SPELLS[p.spells[p.spellSel]];
+  if (p.spellTime > 0) lines.push([`PURPLE CLOUD ${Math.ceil(p.spellTime)}`, "#e0a8ff"]);
+  if (p.domeTime > 0) lines.push([`SAFETY DOME ${Math.ceil(p.domeTime)}`, "#78ffc8"]);
+  lines.push(timer(`CTRL+B ${sp.name}`, p.spellCds[sp.id] || 0));
+  if (p.spells.length > 1) lines.push([`V = NEXT SPELL (${p.spellSel + 1}/${p.spells.length})`, "rgba(255,255,255,0.6)"]);
+  if (st.rebounds) { const n = st.rebounds - p.reboundsUsed; lines.push([`BOUNCES ${n}`, n > 0 ? on : dim]); }
+  if (st.safetyFlag) lines.push(p.flagUsed ? ["FLAG USED", dim] : ["FLAG READY", on]);
+  if (st.shield) lines.push(p.shieldReady ? ["SHIELD READY", "#8fe3ff"] : [`SHIELD ${Math.ceil(p.shieldTimer)}`, dim]);
+  if (st.timeBubble) lines.push(timer("Q SLOW-MO", p.timeCd));
+  if (st.blink) lines.push(timer("E BLINK", p.blinkCd));
+  if (st.cloud) lines.push(timer("C CLOUD", p.cloudCd));
+  if (st.dash) lines.push(["SHIFT DASH", p.dashReady ? CATEGORY.jump.color : dim]);
+  if (st.dive) lines.push(["DOWN DIVE", CATEGORY.jump.color]);
+  lines.forEach(([str, color], i) => txt(str, 12, VIEW_H - 18 - (lines.length - 1 - i) * 14, 7, color));
+}
+
+function drawHUD() {
+  const p = player;
+  txt("SCORE", 12, 12, 8, "#c8d3ff");
+  txt(`${Math.floor(maxHeightPx / PX_PER_M)} m`, 12, 26, 18, "#ffffff");
+  txt(`TIME ${fmtTime(runTime)}`, 12, 52, 8, "#c8d3ff");
+  txt("BOOST", 12, 70, 8, "#ffb3a8");
+  for (let i = 0; i < st.boostMax; i++) {
+    drawPetal(66 + i * 17, 74, -0.5, 1, i < boosts ? 1 : 0.22);
+  }
+  let y = 90;
+  const sec = SECTIONS[sectionAt(Math.max(0, p.y) / PX_PER_M)];
+  txt(sec.name, 12, y, 8, sec.color);
+  y += 16;
+  if (p.y >= SPACE_Y) { txt("LOW GRAVITY", 12, y, 8, "#8fe3ff"); y += 16; }
+  if (timeSlow > 0) txt("SLOW-MO", 12, y, 8, "#8fe3ff");
+  if (mode === "main" && wind.phase !== "calm") {
+    txt(wind.dir > 0 ? "WIND >>>" : "<<< WIND", VIEW_W / 2, 250, 12, wind.phase === "warn" ? "#ffd447" : "#ffffff", "center");
+  }
+
+  if (mode === "sandbox") {
+    const g = currentLevel() && currentLevel().goal;
+    txt(`MY LEVEL ${ed.level + 1}`, VIEW_W - 12, 12, 8, "#7dff7a", "right");
+    txt(g ? `GOAL ${Math.round(g.y / PX_PER_M)} m` : "NO GOAL YET", VIEW_W - 12, 26, 10, "#ffffff", "right");
+    drawAbilityHUD();
+    return;
+  }
+
+  const hi = scores[0];
+  txt("HI", VIEW_W - 12, 12, 8, "#ffd447", "right");
+  txt(hi ? `${hi.initials} ${hi.moon ? "MOON" : hi.height + " m"}` : "---", VIEW_W - 12, 26, 12, "#ffffff", "right");
+
+  // Progress bar: ground at the bottom, Moon at the top
+  const bx = VIEW_W - 10, top = 96, bot = 690;
+  const yFor = h => bot - (bot - top) * clamp(h / MOON_Y, 0, 1);
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  rr(bx - 3, top, 6, bot - top, 3);
+  ctx.fill();
+  ctx.fillStyle = "#fff6d0";
+  ctx.beginPath();
+  ctx.arc(bx, top - 9, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,110,110,0.8)";
+  ctx.fillRect(bx - 5, yFor(DANGER_Y) - 1, 10, 2);
+  ctx.fillStyle = "rgba(120,210,255,0.9)";
+  ctx.fillRect(bx - 5, yFor(SPACE_Y) - 1, 10, 2);
+  if (hi && !hi.moon) {
+    ctx.fillStyle = "#ffd447";
+    ctx.fillRect(bx - 6, yFor(hi.height * PX_PER_M) - 1.5, 12, 3);
+  }
+  ctx.fillStyle = "#7fd4ff";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(bx, yFor(p.y), 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  drawAbilityHUD();
+
+  if (recordFlash > 0 && Math.floor(recordFlash * 6) % 2 === 0) {
+    txt("NEW RECORD!", VIEW_W / 2, 136, 16, "#ffd447", "center");
+  }
+  if (bossActive() && boss.e) {                      // boss health bar
+    txt(boss.def.name, VIEW_W / 2, 58, 9, "#ffb347", "center");
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    rr(110, 72, 260, 12, 4);
+    ctx.fill();
+    ctx.fillStyle = boss.e.hp <= boss.e.maxHp / 2 ? "#ff5a3a" : "#ffb347";
+    rr(110, 72, 260 * Math.max(0, boss.e.hp) / boss.e.maxHp, 12, 4);
+    ctx.fill();
+  }
+  if (boss.phase === "intro") {
+    txt("BOSS FIGHT!", VIEW_W / 2, 290, 22, "#ff6a3a", "center");
+    txt(boss.def.name, VIEW_W / 2, 326, 14, "#ffd447", "center");
+  } else if (boss.phase === "won") {
+    txt(`${boss.def.name} IS BEATEN!`, VIEW_W / 2, 290, 12, "#7dff7a", "center");
+    txt("THE WAY UP IS OPEN!", VIEW_W / 2, 312, 9, "#ffffff", "center");
+  } else if (boss.phase === "waiting" && p.y >= boss.ledge.y - 40) {
+    txt("WALK INTO THE BOSS GATE!", VIEW_W / 2, 250, 10, "#ffd447", "center");
+  }
+  if (sectionFlash > 0) {                            // a new section!
+    const s = SECTIONS[sectionReached];
+    ctx.globalAlpha = Math.min(1, sectionFlash / 0.5);
+    txt(s.name, VIEW_W / 2, 172, 18, s.color, "center");
+    txt(s.tip, VIEW_W / 2, 200, 8, "#ffffff", "center");
+    if (newSpell) txt(`NEW DOG SPELL: ${newSpell}!`, VIEW_W / 2, 218, 8, "#e0a8ff", "center");
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawBoard(cx, y, highlight, t) {
+  const colors = ["#ffd447", "#d7dde8", "#e39a5a"];
+  for (let i = 0; i < MAX_SCORES; i++) {
+    const s = scores[i];
+    const rank = String(i + 1).padStart(2, " ") + ".";
+    const right = s ? (s.moon ? "MOON " + fmtTime(s.time) : (s.height + " m").padStart(9)) : "".padStart(9);
+    const line = `${rank} ${s ? s.initials : "---"}  ${right}`;
+    const ry = y + i * 20;
+    if (i === highlight) {
+      ctx.fillStyle = Math.floor(t * 4) % 2 ? "rgba(255,212,71,0.35)" : "rgba(255,212,71,0.18)";
+      rr(cx - 110, ry - 4, 220, 18, 4);
+      ctx.fill();
+    }
+    txt(line, cx, ry, 10, s ? (colors[i] || "#ffffff") : "rgba(255,255,255,0.35)", "center");
+  }
+}
+
+function drawTitle(t) {
+  const cx = VIEW_W / 2;
+  panel(28, 28, VIEW_W - 56, 572);
+  txt("MOON HOP", cx, 54, 34, "#fff3b0", "center");
+  txt("Jump all the way to the Moon!", cx, 102, 9, "#c8d3ff", "center");
+  const rows = [["ARROWS or A/D", "MOVE"], ["SPACE, UP or W", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"],
+                ["F or J", "SHOOT"], ["CTRL + B", "DOG SPELL"], ["V", "SWITCH DOG SPELL"],
+                ["CATCH PETALS", "SUPER JUMP"], ["P or ESC", "PAUSE"]];
+  rows.forEach(([k, v], i) => {
+    txt(k, 62, 122 + i * 14, 8, "#ffffff");
+    txt(v, VIEW_W - 62, 122 + i * 14, 8, "#9fe39a", "right");
+  });
+  txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
+  txt("TOP CLIMBERS", cx, 266, 12, "#ffd447", "center");
+  drawBoard(cx, 292, -1, t);
+  if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 506, 13, "#ffffff", "center");
+  txt("S = SANDBOX     C = CREDITS", cx, 534, 8, "#c8d3ff", "center");
+  if (fileScoresOK) {
+    txt("SCORES SAVE IN THE GAME FOLDER", cx, 566, 7, "#7dff7a", "center");
+  } else if (localOK) {
+    txt("SCORES SAVE IN THIS BROWSER ONLY", cx, 558, 7, "#c8d3ff", "center");
+    txt("START 'Play Moon Hop' TO SAVE THEM FOR GOOD", cx, 572, 7, "#c8d3ff", "center");
+  } else {
+    txt("SCORES CAN'T BE SAVED IN THIS WINDOW", cx, 558, 7, "#ff8a7a", "center");
+    txt("START THE GAME WITH 'Play Moon Hop'", cx, 572, 7, "#ff8a7a", "center");
+  }
+}
+
+function drawCredits() {
+  const cx = VIEW_W / 2;
+  panel(28, 28, VIEW_W - 56, 600);
+  txt("CREDITS", cx, 60, 20, "#fff3b0", "center");
+  txt("A family game, built one round at a time.", cx, 96, 8, "#c8d3ff", "center");
+  // The list scrolls up by itself, then starts over, so it never runs off the page.
+  const top = 118, bottom = 580;
+  const blocks = CREDITS.map(c => ({ c, lines: wrapLines(c.what, VIEW_W - 130, 8) }));
+  const height = blocks.reduce((h, b) => h + 18 + b.lines.length * 13 + 14, 0);
+  let y = bottom - (creditsT * 24) % (height + (bottom - top));
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(30, top, VIEW_W - 60, bottom - top);
+  ctx.clip();
+  for (const { c, lines } of blocks) {
+    txt(`ROUND ${c.round}  ${c.who.toUpperCase()}`, 60, y, 10, "#ffd447");
+    y += 18;
+    for (const line of lines) {
+      txt(line, 60, y, 8, "#ffffff");
+      y += 13;
+    }
+    y += 14;
+  }
+  ctx.restore();
+  txt("PRESS ANY KEY", cx, 600, 10, "#c8d3ff", "center");
+}
+
+function drawPaused() {
+  const cx = VIEW_W / 2;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  txt("PAUSED", cx, 150, 24, "#ffffff", "center");
+  txt("P or ESC to keep climbing", cx, 192, 9, "#c8d3ff", "center");
+  if (mode === "sandbox") txt("E = BACK TO BUILDING", cx, 212, 9, "#7dff7a", "center");
+  if (taken.length) {
+    txt("YOUR UPGRADES", cx, 240, 10, "#ffd447", "center");
+    taken.forEach((u, i) => {
+      txt(u.name.toUpperCase(), i % 2 ? 252 : 40, 266 + Math.floor(i / 2) * 16, 7, CATEGORY[u.cat].color);
+    });
+  }
+}
+
+function drawCardIcon(cat, x, y, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  if (cat === "jump") {                // an up arrow
+    ctx.moveTo(x, y - 16); ctx.lineTo(x + 14, y); ctx.lineTo(x + 5, y); ctx.lineTo(x + 5, y + 14);
+    ctx.lineTo(x - 5, y + 14); ctx.lineTo(x - 5, y); ctx.lineTo(x - 14, y);
+  } else if (cat === "weapon") {       // a lightning bolt
+    ctx.moveTo(x + 4, y - 16); ctx.lineTo(x - 10, y + 2); ctx.lineTo(x - 1, y + 2);
+    ctx.lineTo(x - 5, y + 16); ctx.lineTo(x + 10, y - 3); ctx.lineTo(x + 1, y - 3);
+  } else {                             // a shield
+    ctx.moveTo(x, y - 16); ctx.lineTo(x + 13, y - 10); ctx.lineTo(x + 11, y + 4);
+    ctx.lineTo(x, y + 16); ctx.lineTo(x - 11, y + 4); ctx.lineTo(x - 13, y - 10);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawChoose(t) {
+  const cx = VIEW_W / 2;
+  ctx.fillStyle = "rgba(4,4,16,0.78)";
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  txt(choice.bonus ? "BOSS PRIZE!" : `${choice.mark} m!`, cx, 92, 24, "#ffd447", "center");
+  txt("PICK AN UPGRADE", cx, 132, 14, "#ffffff", "center");
+
+  const n = choice.cards.length, gap = 8, w = n >= 4 ? 106 : 140, h = 236;
+  const x0 = (VIEW_W - (n * w + (n - 1) * gap)) / 2;
+  choice.cards.forEach((u, i) => {
+    const sel = i === choice.sel, cat = CATEGORY[u.cat];
+    const x = x0 + i * (w + gap), y = 190 - (sel ? 10 : 0);
+    ctx.fillStyle = sel ? "#1d2350" : "#12152e";
+    rr(x, y, w, h, 10);
+    ctx.fill();
+    ctx.strokeStyle = sel ? cat.color : "rgba(255,255,255,0.2)";
+    ctx.lineWidth = sel ? 3 : 1.5;
+    ctx.stroke();
+    ctx.fillStyle = cat.color;
+    rr(x, y, w, 24, 10);
+    ctx.fill();
+    ctx.fillRect(x, y + 12, w, 12);
+    txtPlain(cat.label, x + w / 2, y + 8, 8, "#14142a", "center");
+    txtPlain(String(i + 1), x + 7, y + 8, 8, "#14142a");
+    drawCardIcon(u.cat, x + w / 2, y + 60, cat.color);
+    let ty = y + 92;
+    for (const line of wrapLines(u.name.toUpperCase(), w - 14, 9)) { txt(line, x + w / 2, ty, 9, "#ffffff", "center"); ty += 14; }
+    ty += 8;
+    for (const line of wrapLines(u.desc, w - 14, 7)) { txt(line, x + w / 2, ty, 7, "#c8d3ff", "center"); ty += 12; }
+  });
+
+  const ready = choice.delay <= 0;
+  const hint = ready ? "#ffffff" : "rgba(255,255,255,0.35)";
+  txt("LEFT / RIGHT TO CHOOSE", cx, 456, 9, hint, "center");
+  txt(`ENTER TO TAKE IT  (OR PRESS 1-${n})`, cx, 474, 9, hint, "center");
+  if (rerollsLeft() > 0) txt(`R = NEW CARDS (${rerollsLeft()} LEFT)`, cx, 500, 9, CATEGORY.ability.color, "center");
+}
+
+function drawOver(t) {
+  const cx = VIEW_W / 2;
+  if (overPhase === "sandbox") {
+    panel(36, 200, VIEW_W - 72, 230);
+    if (result.won) {
+      txt("LEVEL COMPLETE!", cx, 230, 16, "#7dff7a", "center");
+      txt(`TIME ${fmtTime(result.time)}`, cx, 266, 10, "#ffffff", "center");
+    } else {
+      txt("YOU FELL!", cx, 228, 20, "#ff8a7a", "center");
+      txt(`YOU CLIMBED ${result.height} m`, cx, 266, 10, "#ffffff", "center");
+    }
+    if (overTimer <= 0) {
+      txt("R or SPACE = TRY AGAIN", cx, 320, 10, "#ffffff", "center");
+      txt("E = EDIT THIS LEVEL", cx, 346, 10, "#7dff7a", "center");
+      txt("ESC = SANDBOX MENU", cx, 372, 10, "#c8d3ff", "center");
+    }
+    return;
+  }
+  panel(36, 96, VIEW_W - 72, 480);
+  if (result.moon) {
+    txt("YOU REACHED", cx, 124, 16, "#ffd447", "center");
+    txt("THE MOON!", cx, 148, 16, "#ffd447", "center");
+    txt(`TIME ${fmtTime(result.time)}`, cx, 182, 10, "#ffffff", "center");
+  } else {
+    txt("YOU FELL!", cx, 128, 20, "#ff8a7a", "center");
+    txt(`YOU CLIMBED ${result.height} m`, cx, 170, 10, "#ffffff", "center");
+  }
+
+  if (overPhase === "initials") {
+    txt("NEW HIGH SCORE!", cx, 238, 14, "#9fe39a", "center");
+    txt("ENTER YOUR INITIALS", cx, 272, 10, "#c8d3ff", "center");
+    for (let i = 0; i < 3; i++) {
+      const x = cx - 60 + i * 60;
+      txt(entry.letters[i], x, 314, 32, i === entry.pos ? "#ffd447" : "#ffffff", "center");
+      if (i === entry.pos && Math.floor(t * 3) % 2 === 0) {
+        ctx.fillStyle = "#ffd447";
+        ctx.fillRect(x - 18, 354, 36, 4);
+      }
+    }
+    txt("TYPE LETTERS or USE ARROWS", cx, 404, 8, "#c8d3ff", "center");
+    txt("ENTER = OK", cx, 424, 8, "#c8d3ff", "center");
+  } else {
+    txt("TOP CLIMBERS", cx, 222, 12, "#ffd447", "center");
+    drawBoard(cx, 250, highlightIndex, t);
+    if (overTimer <= 0) {
+      txt("SPACE = PLAY AGAIN", cx, 474, 10, "#ffffff", "center");
+      txt("ESC = TITLE SCREEN", cx, 498, 10, "#c8d3ff", "center");
+    }
+  }
+}
+
+function drawStar(x, y, r, color, spin = 0) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = spin - Math.PI / 2 + i * Math.PI / 5, rad = i % 2 ? r * 0.45 : r;
+    ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawGoal(t) {
+  const g = currentLevel() && currentLevel().goal;
+  if (!g) return;
+  const sy = toScreenY(g.y);
+  if (sy < -40 || sy > VIEW_H + 40) return;
+  const glow = ctx.createRadialGradient(g.x, sy, 4, g.x, sy, 34);
+  glow.addColorStop(0, "rgba(255,230,120,0.6)");
+  glow.addColorStop(1, "rgba(255,230,120,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(g.x, sy, 34, 0, Math.PI * 2);
+  ctx.fill();
+  drawStar(g.x, sy, 15, "#ffd447", Math.sin(t * 2) * 0.3);
+  txt("GOAL", g.x, sy - 32, 8, "#ffd447", "center");
+}
+
+// Small pictures for the builder's toolbar.
+function drawToolIcon(id, x, y) {
+  const bar = (bx, by, w) => { ctx.fillStyle = "#b8a4ff"; rr(bx, by, w, 6, 2); ctx.fill(); };
+  if (id === "plat") bar(x - 14, y, 28);
+  else if (id === "move") {
+    bar(x - 10, y, 20);
+    ctx.fillStyle = "#78dcff";
+    ctx.beginPath(); ctx.moveTo(x - 18, y + 3); ctx.lineTo(x - 13, y - 1); ctx.lineTo(x - 13, y + 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x + 18, y + 3); ctx.lineTo(x + 13, y - 1); ctx.lineTo(x + 13, y + 7); ctx.fill();
+  } else if (id === "sweep") {
+    bar(x - 14, y + 4, 28);
+    ctx.fillStyle = "#ffd447"; ctx.fillRect(x - 5, y - 6, 10, 10);
+    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(x - 2, y - 6, 3, 10);
+  } else if (id === "poppy") {
+    ctx.strokeStyle = "#3f8f3a"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, y + 8); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillStyle = "#e8322b"; ctx.beginPath(); ctx.arc(x, y - 2, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#2a1414"; ctx.beginPath(); ctx.arc(x, y - 2, 2, 0, Math.PI * 2); ctx.fill();
+  } else if (ENEMY_INFO[id]) {
+    ctx.fillStyle = `rgb(${ENEMY_INFO[id].color})`;
+    ctx.beginPath(); ctx.arc(x, y + 1, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(x - 3, y - 1, 2.5, 0, Math.PI * 2); ctx.arc(x + 3, y - 1, 2.5, 0, Math.PI * 2); ctx.fill();
+  } else if (id === "goal") drawStar(x, y + 1, 10, "#ffd447");
+  else if (id === "erase") {
+    ctx.strokeStyle = "#ff6a6a"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x - 7, y - 6); ctx.lineTo(x + 7, y + 8); ctx.moveTo(x + 7, y - 6); ctx.lineTo(x - 7, y + 8); ctx.stroke();
+  }
+}
+
+function drawEditor(t) {
+  // Height lines every 5 m, with a label every 25 m.
+  for (let m = Math.ceil(camY / PX_PER_M / 5) * 5; m * PX_PER_M < camY + VIEW_H; m += 5) {
+    const sy = toScreenY(m * PX_PER_M);
+    ctx.fillStyle = m % 25 === 0 ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)";
+    ctx.fillRect(0, sy, VIEW_W, 1);
+    if (m % 25 === 0 && m > 0) txt(`${m} m`, 4, sy - 10, 7, "rgba(255,255,255,0.6)");
+  }
+  // How far each moving platform slides
+  ctx.save();
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = "rgba(120,220,255,0.6)";
+  for (const s of movers) ctx.strokeRect(s.baseX - s.amp, toScreenY(s.y) - 2, s.w + s.amp * 2, 18);
+  ctx.restore();
+
+  // What you're about to place
+  const m = ed.mouse, tool = TOOLS[ed.tool];
+  if (ed.drag) {
+    const x1 = Math.min(ed.drag.x, snap(m.x)), x2 = Math.max(ed.drag.x, snap(m.x));
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    rr(x1, toScreenY(ed.drag.y), Math.max(x2 - x1, 4), 14, 5);
+    ctx.fill();
+  } else if (m.in && m.y < VIEW_H - TOOLBAR_H) {
+    ctx.globalAlpha = 0.5;
+    if (tool.id === "plat" || tool.id === "move") { ctx.fillStyle = "#ffffff"; rr(snap(m.x) - 40, toScreenY(snap(edWorldY(m.y))), 80, 14, 5); ctx.fill(); }
+    else if (tool.id === "erase") drawToolIcon("erase", m.x, m.y);
+    else drawToolIcon(tool.id, m.x, m.y);
+    ctx.globalAlpha = 1;
+  }
+
+  // Top bar
+  ctx.fillStyle = "rgba(8,10,30,0.85)";
+  ctx.fillRect(0, 0, VIEW_W, 44);
+  txt(`LEVEL ${ed.level + 1}   ${tool.name}`, 10, 8, 9, "#7dff7a");
+  txt(tool.tip, 10, 26, 7, "#c8d3ff");
+  if (m.in) txt(`${Math.max(0, Math.round(edWorldY(m.y) / PX_PER_M))} m`, VIEW_W - 10, 8, 9, "#ffffff", "right");
+  txt("WHEEL or W/S SCROLL   ENTER TEST   ESC SAVE", cx0(), VIEW_H - TOOLBAR_H - 16, 7, "rgba(255,255,255,0.8)", "center");
+
+  // Toolbar
+  const cw = VIEW_W / TOOLS.length, ty = VIEW_H - TOOLBAR_H;
+  ctx.fillStyle = "rgba(8,10,30,0.92)";
+  ctx.fillRect(0, ty, VIEW_W, TOOLBAR_H);
+  TOOLS.forEach((tl, i) => {
+    const x = i * cw;
+    if (i === ed.tool) { ctx.fillStyle = "rgba(125,255,122,0.25)"; rr(x + 2, ty + 3, cw - 4, TOOLBAR_H - 6, 6); ctx.fill(); }
+    txtPlain(String((i + 1) % 10), x + 4, ty + 5, 7, i === ed.tool ? "#7dff7a" : "rgba(255,255,255,0.5)");
+    drawToolIcon(tl.id, x + cw / 2, ty + 30);
+  });
+  if (ed.msgT > 0) txt(ed.msg, cx0(), 300, 10, "#ffd447", "center");
+}
+const cx0 = () => VIEW_W / 2;
+
+function drawSandboxHub(t) {
+  const cx = VIEW_W / 2;
+  panel(28, 28, VIEW_W - 56, 610);
+  txt("SANDBOX", cx, 54, 26, "#7dff7a", "center");
+  txt("Build your own levels!", cx, 92, 9, "#c8d3ff", "center");
+  for (let i = 0; i < LEVEL_SLOTS; i++) {
+    const L = sandbox.levels[i], y = 120 + i * 46, sel = i === sbSel;
+    ctx.fillStyle = sel ? "rgba(125,255,122,0.18)" : "rgba(255,255,255,0.05)";
+    rr(56, y, VIEW_W - 112, 38, 8);
+    ctx.fill();
+    if (sel) { ctx.strokeStyle = "#7dff7a"; ctx.lineWidth = 2; ctx.stroke(); }
+    txt(`LEVEL ${i + 1}`, 70, y + 8, 10, sel ? "#ffffff" : "#c8d3ff");
+    const info = !L ? "EMPTY - PRESS ENTER TO BUILD"
+      : `${L.platforms.length} PLATFORMS  ${L.enemies.length} ENEMIES${L.goal ? "" : "  NO GOAL"}`;
+    txt(info, 70, y + 24, 7, L ? "#9fe39a" : "rgba(255,255,255,0.45)");
+  }
+  const rows = [["UP / DOWN", "PICK A LEVEL"], ["ENTER", "BUILD / EDIT"], ["SPACE", "PLAY IT"],
+                ["X X", "CLEAR IT"], ["C", "MAKE A CHARACTER"], ["ESC", "BACK"]];
+  rows.forEach(([k, v], i) => {
+    txt(k, 70, 362 + i * 18, 8, "#ffffff");
+    txt(v, VIEW_W - 70, 362 + i * 18, 8, "#9fe39a", "right");
+  });
+  if (clearArmed) txt("PRESS X AGAIN TO CLEAR THIS LEVEL!", cx, 478, 8, "#ff8a7a", "center");
+
+  txt("PLAYING AS", cx, 500, 8, "#c8d3ff", "center");
+  txt(currentChar().name || "?", cx, 514, 12, "#ffd447", "center");
+  ctx.save();
+  ctx.translate(cx - 14, 616);
+  ctx.scale(2.2, 2.2);
+  drawAstronaut(currentChar(), false, 0);
+  ctx.restore();
+  drawDogAt(cx + 42, 572 + Math.sin(t * 3) * 3, -1, 1.6, t);
+}
+
+function drawCharMaker(t) {
+  const cx = VIEW_W / 2, c = currentChar();
+  panel(28, 20, VIEW_W - 56, 680);
+  txt("CHARACTER MAKER", cx, 40, 16, "#ffd447", "center");
+  // Big preview with the dog
+  ctx.save();
+  ctx.translate(cx - 20, 210);
+  ctx.scale(3.6, 3.6);
+  drawAstronaut(c, false, 0);
+  ctx.restore();
+  drawDogAt(cx + 70, 120 + Math.sin(t * 3) * 4, -1, 2.4, t);
+
+  CHAR_ROWS.forEach((label, i) => {
+    const y = 236 + i * 34, sel = i === cm.row;
+    if (sel) { ctx.fillStyle = "rgba(255,212,71,0.16)"; rr(50, y - 6, VIEW_W - 100, 28, 6); ctx.fill(); }
+    txt(label, 64, y + 2, 8, sel ? "#ffd447" : "#c8d3ff");
+    const vx = VIEW_W - 150;
+    if (label === "CHARACTER") txt(`< ${sandbox.selected + 1} OF ${sandbox.characters.length} >`, vx + 40, y + 2, 9, "#ffffff", "center");
+    else if (label === "NAME") txt(c.name + (sel && Math.floor(t * 3) % 2 ? "_" : ""), vx - 20, y + 2, 9, "#ffffff");
+    else if (label === "HAT") txt(`< ${HATS[c.hat]} >`, vx + 40, y + 2, 8, "#ffffff", "center");
+    else {
+      const hex = PALETTE[c[COLOR_ROWS[label]]];
+      txt("<", vx, y + 2, 9, "#ffffff");
+      ctx.fillStyle = hex;
+      rr(vx + 18, y - 2, 46, 16, 4);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      txt(">", vx + 72, y + 2, 9, "#ffffff");
+    }
+  });
+  const hints = ["UP / DOWN = PICK A ROW", "LEFT / RIGHT = CHANGE IT", "TYPE ON THE NAME ROW",
+                 "N = NEW CHARACTER   DEL = DELETE", "ENTER or ESC = SAVE"];
+  hints.forEach((h, i) => txt(h, cx, 520 + i * 16, 7, "#c8d3ff", "center"));
+  txt("YOUR CHARACTER PLAYS IN THE MAIN GAME TOO!", cx, 610, 7, "#7dff7a", "center");
+}
+
+function render(t) {
+  // 1) The world, drawn small for the chunky pixel look
+  ctx = wctx;
+  wctx.setTransform(1 / PIXEL, 0, 0, 1 / PIXEL, 0, 0);
+  drawSky();
+  drawStars(t);
+  drawBackdrop(t);
+  drawMoon();
+  drawClouds(t);
+  const main = mode === "main";
+  if (main) {
+    drawEdgeGlow(DANGER_Y, "255,80,80");
+    drawEdgeGlow(SPACE_Y, "120,210,255");
+  }
+  const inRun = state === "playing" || state === "paused" || state === "choose" || state === "over";
+  if (inRun && main) drawRecordLines();
+  for (const s of tower) drawPlatform(s, t);
+  if (!main) drawGoal(t);
+  if (main) drawBossArena(t);
+  for (const c of tempPlats) drawCloudPlat(c);
+  for (const f of poppies) drawPoppy(f, t);
+  for (const e of enemies) if (e.alive) drawEnemy(e, t);
+  drawParticles();
+  drawPetals();
+  drawShots();
+  drawEffects();
+  drawDog(t);
+  drawPlayer(t);
+  drawSpellCloud(t);
+  drawWeather(t);
+  drawConfetti();
+  if (timeSlow > 0) {
+    ctx.fillStyle = "rgba(80,140,255,0.12)";
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  }
+
+  // 2) Blow it up with sharp pixel edges, then put the words on top
+  ctx = mainCtx;
+  mainCtx.imageSmoothingEnabled = false;
+  mainCtx.drawImage(worldCanvas, 0, 0, VIEW_W, VIEW_H);
+  for (const [fn, ...args] of textQueue) {
+    mainCtx.globalAlpha = args.pop();
+    fn(...args);
+  }
+  mainCtx.globalAlpha = 1;
+  textQueue.length = 0;
+
+  // 3) Menus and the HUD, drawn at full sharpness
+  if (inRun) {
+    if (st.radar) drawRadar();
+    drawHUD();
+  }
+  if (state === "title") drawTitle(t);
+  else if (state === "editor") drawEditor(t);
+  else if (state === "sandbox") drawSandboxHub(t);
+  else if (state === "chars") drawCharMaker(t);
+  else if (state === "credits") drawCredits();
+  else if (state === "paused") drawPaused();
+  else if (state === "choose") drawChoose(t);
+  else if (state === "over") drawOver(t);
+}
+
+// =====================================================================
+//  MAIN LOOP (fixed steps so the jumping feels the same on every computer)
+// =====================================================================
+const STEP = 1 / 120;
+let last = performance.now(), acc = 0;
+function frame(now) {
+  acc += Math.min(0.05, (now - last) / 1000);
+  last = now;
+  while (acc >= STEP) { update(STEP); acc -= STEP; }
+  render(now / 1000);
+  requestAnimationFrame(frame);
+}
+showTitle();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
