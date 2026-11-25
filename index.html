@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Moon Hop">
 <title>Moon Hop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,10 +15,40 @@
   html, body { margin: 0; height: 100%; background: #05040f; overflow: hidden; }
   body { display: flex; align-items: center; justify-content: center; }
   canvas { display: block; outline: none; }
+  /* Touch screens (Round 9): no zooming, scrolling, text selection or tap flashes */
+  html, body, canvas { touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none;
+                       -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  #pad { position: fixed; inset: 0; pointer-events: none; font-family: "Press Start 2P", monospace; }
+  #pad.hidden, #pauseBtn.hidden { display: none; }
+  .pb { pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+        border: 3px solid rgba(255,255,255,0.55); background: rgba(30,34,70,0.8); color: #fff; font: inherit;
+        font-size: 12px; border-radius: 16px; width: 76px; height: 76px; padding: 0; }
+  .pb.big { width: 92px; height: 92px; font-size: 13px; border-color: #7dff7a; }
+  .pb.small { width: 62px; height: 42px; font-size: 8px; border-color: #c39bff; border-radius: 12px; }
+  .pb.on { background: rgba(125,255,122,0.5); }
+  #padLeft, #padRight, #padExtras { position: absolute; display: flex; gap: 8px; align-items: flex-end; }
+  #padLeft { left: 10px; bottom: 14px; }
+  #padExtras { left: 10px; bottom: 104px; flex-wrap: wrap; width: 200px; }
+  #padRight { right: 10px; bottom: 14px; flex-wrap: wrap; justify-content: flex-end; width: 184px; }
+  #pauseBtn { position: fixed; width: 40px; height: 40px; font-size: 10px; border-radius: 10px; }
 </style>
 </head>
 <body>
 <canvas id="game" tabindex="0"></canvas>
+<div id="pad" class="hidden">
+  <div id="padLeft">
+    <button class="pb" data-hold="ArrowLeft">&lt;</button>
+    <button class="pb" data-hold="ArrowRight">&gt;</button>
+  </div>
+  <div id="padExtras"></div>
+  <div id="padRight">
+    <button class="pb small" data-tap="spell">SPELL</button>
+    <button class="pb small" data-tap="KeyV">NEXT</button>
+    <button class="pb" data-hold="KeyF">SHOOT</button>
+    <button class="pb big" data-hold="Space">JUMP</button>
+  </div>
+</div>
+<button id="pauseBtn" class="pb hidden" data-tap="KeyP">II</button>
 <script>
 "use strict";
 
@@ -224,11 +258,26 @@ const wctx = worldCanvas.getContext("2d");
 let ctx = mainCtx;
 const textQueue = [];
 
+// Touch screens (Round 9): on-screen buttons go below the game when the device is
+// upright, or beside it when it's sideways, so they never cover the action.
+const IS_TOUCH = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+const PAD_BELOW = 196, PAD_SIDE = 200;
+
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  const scale = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
-  canvas.style.width = Math.floor(VIEW_W * scale) + "px";
-  canvas.style.height = Math.floor(VIEW_H * scale) + "px";
+  const W = window.innerWidth, H = window.innerHeight;
+  const portrait = H >= W;
+  const roomW = IS_TOUCH && !portrait ? W - PAD_SIDE * 2 : W;
+  const roomH = IS_TOUCH && portrait ? H - PAD_BELOW : H;
+  const scale = Math.max(0.2, Math.min(roomW / VIEW_W, roomH / VIEW_H));
+  const cw = Math.floor(VIEW_W * scale), ch = Math.floor(VIEW_H * scale);
+  canvas.style.width = cw + "px";
+  canvas.style.height = ch + "px";
+  if (IS_TOUCH) {
+    const left = Math.floor((W - cw) / 2), top = portrait ? Math.max(0, Math.floor((roomH - ch) / 2)) : Math.floor((H - ch) / 2);
+    Object.assign(canvas.style, { position: "absolute", left: left + "px", top: top + "px" });
+    Object.assign(document.getElementById("pauseBtn").style, { left: left + cw - 48 + "px", top: top + Math.floor(ch * 0.075) + "px" });
+  }
   canvas.width = Math.floor(VIEW_W * scale * dpr);
   canvas.height = Math.floor(VIEW_H * scale * dpr);
   mainCtx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
@@ -742,6 +791,11 @@ function showTitle() {
   state = "title";
 }
 
+function openCredits() {
+  state = "credits";
+  creditsT = 0;
+}
+
 // ---------- Sandbox screens ----------
 const currentLevel = () => sandbox.levels[ed.level];
 
@@ -953,7 +1007,7 @@ function onKeyPress(e) {
   const c = e.code;
   if (state === "title") {
     if (c === "Space" || c === "Enter") startRun();
-    else if (c === "KeyC") { state = "credits"; creditsT = 0; }
+    else if (c === "KeyC") openCredits();
     else if (c === "KeyS") openSandbox();
   } else if (state === "sandbox") {
     handleSandboxKey(e);
@@ -1122,16 +1176,37 @@ function mouseToGame(ev) {
   const r = canvas.getBoundingClientRect();
   return { x: (ev.clientX - r.left) / r.width * VIEW_W, y: (ev.clientY - r.top) / r.height * VIEW_H };
 }
-canvas.addEventListener("mousedown", ev => {
-  if (state !== "editor") return;
+// Pointer events work for a mouse AND a finger. Taps first check the on-screen
+// buttons that menus draw on touch screens (uiButtons), then the level builder.
+const uiButtons = [];
+function uiButton(label, x, y, w, h, action, color = "#7dff7a", size = 10, draw = true) {
+  if (draw) {
+    ctx.fillStyle = "rgba(20,24,56,0.94)";
+    rr(x, y, w, h, 8);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    txt(label, x + w / 2, y + h / 2 - size / 2, size, color, "center");
+  }
+  uiButtons.push({ x, y, w, h, action });
+}
+
+canvas.addEventListener("pointerdown", ev => {
   ev.preventDefault();
-  editorPress(mouseToGame(ev), ev.button);
+  const m = mouseToGame(ev);
+  Object.assign(ed.mouse, { x: m.x, y: m.y, in: true });
+  for (let i = uiButtons.length - 1; i >= 0; i--) {
+    const b = uiButtons[i];
+    if (m.x >= b.x && m.x <= b.x + b.w && m.y >= b.y && m.y <= b.y + b.h) { b.action(m); return; }
+  }
+  if (state === "editor") editorPress(m, ev.button);
 });
-window.addEventListener("mousemove", ev => {
+window.addEventListener("pointermove", ev => {
   const m = mouseToGame(ev);
   Object.assign(ed.mouse, { x: m.x, y: m.y, in: m.x >= 0 && m.x <= VIEW_W && m.y >= 0 && m.y <= VIEW_H });
 });
-window.addEventListener("mouseup", ev => { if (state === "editor" && ed.drag) editorRelease(mouseToGame(ev)); });
+window.addEventListener("pointerup", ev => { if (state === "editor" && ed.drag) editorRelease(mouseToGame(ev)); });
 canvas.addEventListener("wheel", ev => {
   if (state !== "editor") return;
   ev.preventDefault();
@@ -3303,16 +3378,17 @@ function drawAbilityHUD() {
   const sp = SPELLS[p.spells[p.spellSel]];
   if (p.spellTime > 0) lines.push([`PURPLE CLOUD ${Math.ceil(p.spellTime)}`, "#e0a8ff"]);
   if (p.domeTime > 0) lines.push([`SAFETY DOME ${Math.ceil(p.domeTime)}`, "#78ffc8"]);
-  lines.push(timer(`CTRL+B ${sp.name}`, p.spellCds[sp.id] || 0));
-  if (p.spells.length > 1) lines.push([`V = NEXT SPELL (${p.spellSel + 1}/${p.spells.length})`, "rgba(255,255,255,0.6)"]);
+  lines.push(timer(`${IS_TOUCH ? "SPELL:" : "CTRL+B"} ${sp.name}`, p.spellCds[sp.id] || 0));
+  if (p.spells.length > 1) lines.push([`${IS_TOUCH ? "NEXT" : "V"} = NEXT SPELL (${p.spellSel + 1}/${p.spells.length})`, "rgba(255,255,255,0.6)"]);
   if (st.rebounds) { const n = st.rebounds - p.reboundsUsed; lines.push([`BOUNCES ${n}`, n > 0 ? on : dim]); }
   if (st.safetyFlag) lines.push(p.flagUsed ? ["FLAG USED", dim] : ["FLAG READY", on]);
   if (st.shield) lines.push(p.shieldReady ? ["SHIELD READY", "#8fe3ff"] : [`SHIELD ${Math.ceil(p.shieldTimer)}`, dim]);
-  if (st.timeBubble) lines.push(timer("Q SLOW-MO", p.timeCd));
-  if (st.blink) lines.push(timer("E BLINK", p.blinkCd));
-  if (st.cloud) lines.push(timer("C CLOUD", p.cloudCd));
-  if (st.dash) lines.push(["SHIFT DASH", p.dashReady ? CATEGORY.jump.color : dim]);
-  if (st.dive) lines.push(["DOWN DIVE", CATEGORY.jump.color]);
+  const k = (key, name) => (IS_TOUCH ? name : `${key} ${name}`);    // on touch screens, the button says the name
+  if (st.timeBubble) lines.push(timer(k("Q", "SLOW-MO"), p.timeCd));
+  if (st.blink) lines.push(timer(k("E", "BLINK"), p.blinkCd));
+  if (st.cloud) lines.push(timer(k("C", "CLOUD"), p.cloudCd));
+  if (st.dash) lines.push([k("SHIFT", "DASH"), p.dashReady ? CATEGORY.jump.color : dim]);
+  if (st.dive) lines.push([k("DOWN", "DIVE"), CATEGORY.jump.color]);
   lines.forEach(([str, color], i) => txt(str, 12, VIEW_H - 18 - (lines.length - 1 - i) * 14, 7, color));
 }
 
@@ -3428,9 +3504,12 @@ function drawTitle(t) {
   panel(28, 28, VIEW_W - 56, 572);
   txt("MOON HOP", cx, 54, 34, "#fff3b0", "center");
   txt("Jump all the way to the Moon!", cx, 102, 9, "#c8d3ff", "center");
-  const rows = [["ARROWS or A/D", "MOVE"], ["SPACE, UP or W", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"],
-                ["F or J", "SHOOT"], ["CTRL + B", "DOG SPELL"], ["V", "SWITCH DOG SPELL"],
-                ["CATCH PETALS", "SUPER JUMP"], ["P or ESC", "PAUSE"]];
+  const rows = IS_TOUCH
+    ? [["< >", "MOVE"], ["JUMP", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"], ["SHOOT", "SHOOT"], ["SPELL", "DOG SPELL"],
+       ["NEXT", "SWITCH DOG SPELL"], ["CATCH PETALS", "SUPER JUMP"], ["II", "PAUSE"]]
+    : [["ARROWS or A/D", "MOVE"], ["SPACE, UP or W", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"],
+       ["F or J", "SHOOT"], ["CTRL + B", "DOG SPELL"], ["V", "SWITCH DOG SPELL"],
+       ["CATCH PETALS", "SUPER JUMP"], ["P or ESC", "PAUSE"]];
   rows.forEach(([k, v], i) => {
     txt(k, 62, 122 + i * 14, 8, "#ffffff");
     txt(v, VIEW_W - 62, 122 + i * 14, 8, "#9fe39a", "right");
@@ -3438,8 +3517,21 @@ function drawTitle(t) {
   txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
   txt("TOP CLIMBERS", cx, 266, 12, "#ffd447", "center");
   drawBoard(cx, 292, -1, t);
-  if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 506, 13, "#ffffff", "center");
-  txt("S = SANDBOX     C = CREDITS", cx, 534, 8, "#c8d3ff", "center");
+  if (IS_TOUCH) {
+    uiButton("TAP TO PLAY", cx - 110, 498, 220, 36, startRun, "#ffffff", 12);
+    uiButton("SANDBOX", cx - 150, 540, 140, 28, openSandbox, "#7dff7a", 8);
+    uiButton("CREDITS", cx + 10, 540, 140, 28, openCredits, "#c8d3ff", 8);
+    ctx.save();
+    ctx.translate(0, 18);                    // the save notice goes below the buttons
+  } else {
+    if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 506, 13, "#ffffff", "center");
+    txt("S = SANDBOX     C = CREDITS", cx, 534, 8, "#c8d3ff", "center");
+  }
+  drawSaveNotice(cx);
+  if (IS_TOUCH) ctx.restore();
+}
+
+function drawSaveNotice(cx) {
   if (fileScoresOK) {
     txt("SCORES SAVE IN THE GAME FOLDER", cx, 566, 7, "#7dff7a", "center");
   } else if (localOK && ON_WEB) {
@@ -3477,7 +3569,8 @@ function drawCredits() {
     y += 14;
   }
   ctx.restore();
-  txt("PRESS ANY KEY", cx, 600, 10, "#c8d3ff", "center");
+  txt(IS_TOUCH ? "TAP TO GO BACK" : "PRESS ANY KEY", cx, 600, 10, "#c8d3ff", "center");
+  if (IS_TOUCH) uiButton("", 0, 0, VIEW_W, VIEW_H, () => { state = "title"; }, "", 0, false);
 }
 
 function drawPaused() {
@@ -3485,8 +3578,14 @@ function drawPaused() {
   ctx.fillStyle = "rgba(0,0,0,0.6)";
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   txt("PAUSED", cx, 150, 24, "#ffffff", "center");
-  txt("P or ESC to keep climbing", cx, 192, 9, "#c8d3ff", "center");
-  if (mode === "sandbox") txt("E = BACK TO BUILDING", cx, 212, 9, "#7dff7a", "center");
+  if (IS_TOUCH) {
+    uiButton("KEEP CLIMBING", cx - 120, 560, 240, 40, () => { state = "playing"; }, "#7dff7a", 11);
+    if (mode === "sandbox") uiButton("BACK TO BUILDING", cx - 120, 612, 240, 34, () => openEditor(ed.level), "#ffd447", 9);
+    else uiButton("QUIT TO TITLE", cx - 120, 612, 240, 34, showTitle, "#c8d3ff", 9);
+  } else {
+    txt("P or ESC to keep climbing", cx, 192, 9, "#c8d3ff", "center");
+    if (mode === "sandbox") txt("E = BACK TO BUILDING", cx, 212, 9, "#7dff7a", "center");
+  }
   if (taken.length) {
     txt("YOUR UPGRADES", cx, 240, 10, "#ffd447", "center");
     taken.forEach((u, i) => {
@@ -3541,10 +3640,20 @@ function drawChoose(t) {
     for (const line of wrapLines(u.name.toUpperCase(), w - 14, 9)) { txt(line, x + w / 2, ty, 9, "#ffffff", "center"); ty += 14; }
     ty += 8;
     for (const line of wrapLines(u.desc, w - 14, 7)) { txt(line, x + w / 2, ty, 7, "#c8d3ff", "center"); ty += 12; }
+    if (IS_TOUCH) uiButton("", x, y, w, h, () => { if (choice.delay <= 0) takeCard(i); }, "", 0, false);
   });
 
   const ready = choice.delay <= 0;
   const hint = ready ? "#ffffff" : "rgba(255,255,255,0.35)";
+  if (IS_TOUCH) {
+    txt("TAP A CARD TO TAKE IT", cx, 462, 10, hint, "center");
+    if (rerollsLeft() > 0) {
+      uiButton(`NEW CARDS (${rerollsLeft()} LEFT)`, cx - 120, 492, 240, 34, () => {
+        if (choice.delay <= 0 && rerollsLeft() > 0) { player.rerollsUsed++; dealCards(); }
+      }, CATEGORY.ability.color, 8);
+    }
+    return;
+  }
   txt("LEFT / RIGHT TO CHOOSE", cx, 456, 9, hint, "center");
   txt(`ENTER TO TAKE IT  (OR PRESS 1-${n})`, cx, 474, 9, hint, "center");
   if (rerollsLeft() > 0) txt(`R = NEW CARDS (${rerollsLeft()} LEFT)`, cx, 500, 9, CATEGORY.ability.color, "center");
@@ -3561,7 +3670,11 @@ function drawOver(t) {
       txt("YOU FELL!", cx, 228, 20, "#ff8a7a", "center");
       txt(`YOU CLIMBED ${result.height} m`, cx, 266, 10, "#ffffff", "center");
     }
-    if (overTimer <= 0) {
+    if (overTimer <= 0 && IS_TOUCH) {
+      uiButton("TRY AGAIN", cx - 110, 304, 220, 32, () => playLevel(ed.level, sbReturn), "#ffffff", 10);
+      uiButton("EDIT THIS LEVEL", cx - 110, 344, 220, 32, () => openEditor(ed.level), "#7dff7a", 9);
+      uiButton("SANDBOX MENU", cx - 110, 384, 220, 32, openSandbox, "#c8d3ff", 9);
+    } else if (overTimer <= 0) {
       txt("R or SPACE = TRY AGAIN", cx, 320, 10, "#ffffff", "center");
       txt("E = EDIT THIS LEVEL", cx, 346, 10, "#7dff7a", "center");
       txt("ESC = SANDBOX MENU", cx, 372, 10, "#c8d3ff", "center");
@@ -3589,12 +3702,25 @@ function drawOver(t) {
         ctx.fillRect(x - 18, 354, 36, 4);
       }
     }
-    txt("TYPE LETTERS or USE ARROWS", cx, 404, 8, "#c8d3ff", "center");
-    txt("ENTER = OK", cx, 424, 8, "#c8d3ff", "center");
+    if (IS_TOUCH) {                                    // tap + or - on a letter, then OK
+      for (let i = 0; i < 3; i++) {
+        const x = cx - 60 + i * 60;
+        const change = step => () => { if (overTimer <= 0) { entry.pos = i; entry.letters[i] = shiftLetter(entry.letters[i], step); } };
+        uiButton("+", x - 22, 280, 44, 28, change(1), "#ffffff", 12);
+        uiButton("-", x - 22, 364, 44, 28, change(-1), "#ffffff", 12);
+      }
+      uiButton("OK", cx - 70, 410, 140, 36, () => { if (overTimer <= 0) saveEntry(); }, "#7dff7a", 12);
+    } else {
+      txt("TYPE LETTERS or USE ARROWS", cx, 404, 8, "#c8d3ff", "center");
+      txt("ENTER = OK", cx, 424, 8, "#c8d3ff", "center");
+    }
   } else {
     txt("TOP CLIMBERS", cx, 222, 12, "#ffd447", "center");
     drawBoard(cx, 250, highlightIndex, t);
-    if (overTimer <= 0) {
+    if (overTimer <= 0 && IS_TOUCH) {
+      uiButton("PLAY AGAIN", cx - 150, 470, 140, 36, startRun, "#ffffff", 9);
+      uiButton("TITLE", cx + 10, 470, 140, 36, showTitle, "#c8d3ff", 9);
+    } else if (overTimer <= 0) {
       txt("SPACE = PLAY AGAIN", cx, 474, 10, "#ffffff", "center");
       txt("ESC = TITLE SCREEN", cx, 498, 10, "#c8d3ff", "center");
     }
@@ -3693,8 +3819,17 @@ function drawEditor(t) {
   ctx.fillRect(0, 0, VIEW_W, 44);
   txt(`LEVEL ${ed.level + 1}   ${tool.name}`, 10, 8, 9, "#7dff7a");
   txt(tool.tip, 10, 26, 7, "#c8d3ff");
-  if (m.in) txt(`${Math.max(0, Math.round(edWorldY(m.y) / PX_PER_M))} m`, VIEW_W - 10, 8, 9, "#ffffff", "right");
-  txt("WHEEL or W/S SCROLL   ENTER TEST   ESC SAVE", cx0(), VIEW_H - TOOLBAR_H - 16, 7, "rgba(255,255,255,0.8)", "center");
+  if (IS_TOUCH) {
+    const scroll = d => () => { ed.camY = clamp(ed.camY + d, CAM_MIN, EDIT_MAX_Y - VIEW_H + 200); };
+    uiButton("TEST", VIEW_W - 150, 6, 66, 32, () => handleEditorKey({ code: "Enter" }), "#7dff7a", 8);
+    uiButton("SAVE", VIEW_W - 78, 6, 70, 32, () => handleEditorKey({ code: "Escape" }), "#ffd447", 8);
+    uiButton("UP", VIEW_W - 58, 260, 50, 46, scroll(240), "#ffffff", 9);
+    uiButton("DOWN", VIEW_W - 58, 314, 50, 46, scroll(-240), "#ffffff", 7);
+    txt("TAP A TOOL, THEN TAP OR DRAG TO BUILD", cx0(), VIEW_H - TOOLBAR_H - 16, 7, "rgba(255,255,255,0.8)", "center");
+  } else {
+    if (m.in) txt(`${Math.max(0, Math.round(edWorldY(m.y) / PX_PER_M))} m`, VIEW_W - 10, 8, 9, "#ffffff", "right");
+    txt("WHEEL or W/S SCROLL   ENTER TEST   ESC SAVE", cx0(), VIEW_H - TOOLBAR_H - 16, 7, "rgba(255,255,255,0.8)", "center");
+  }
 
   // Toolbar
   const cw = VIEW_W / TOOLS.length, ty = VIEW_H - TOOLBAR_H;
@@ -3725,13 +3860,23 @@ function drawSandboxHub(t) {
     const info = !L ? "EMPTY - PRESS ENTER TO BUILD"
       : `${L.platforms.length} PLATFORMS  ${L.enemies.length} ENEMIES${L.goal ? "" : "  NO GOAL"}`;
     txt(info, 70, y + 24, 7, L ? "#9fe39a" : "rgba(255,255,255,0.45)");
+    if (IS_TOUCH) uiButton("", 56, y, VIEW_W - 112, 38, () => { sbSel = i; clearArmed = false; }, "", 0, false);
   }
-  const rows = [["UP / DOWN", "PICK A LEVEL"], ["ENTER", "BUILD / EDIT"], ["SPACE", "PLAY IT"],
-                ["X X", "CLEAR IT"], ["C", "MAKE A CHARACTER"], ["ESC", "BACK"]];
-  rows.forEach(([k, v], i) => {
-    txt(k, 70, 362 + i * 18, 8, "#ffffff");
-    txt(v, VIEW_W - 70, 362 + i * 18, 8, "#9fe39a", "right");
-  });
+  if (IS_TOUCH) {
+    const key = code => () => handleSandboxKey({ code, key: "" });
+    uiButton("BUILD", 60, 356, 172, 32, key("Enter"), "#7dff7a", 9);
+    uiButton("PLAY", 248, 356, 172, 32, key("Space"), "#ffffff", 9);
+    uiButton(clearArmed ? "SURE? TAP!" : "CLEAR", 60, 396, 172, 32, key("KeyX"), "#ff8a7a", 9);
+    uiButton("CHARACTERS", 248, 396, 172, 32, key("KeyC"), "#ffd447", 8);
+    uiButton("BACK", 154, 436, 172, 30, key("Escape"), "#c8d3ff", 8);
+  } else {
+    const rows = [["UP / DOWN", "PICK A LEVEL"], ["ENTER", "BUILD / EDIT"], ["SPACE", "PLAY IT"],
+                  ["X X", "CLEAR IT"], ["C", "MAKE A CHARACTER"], ["ESC", "BACK"]];
+    rows.forEach(([k, v], i) => {
+      txt(k, 70, 362 + i * 18, 8, "#ffffff");
+      txt(v, VIEW_W - 70, 362 + i * 18, 8, "#9fe39a", "right");
+    });
+  }
   if (clearArmed) txt("PRESS X AGAIN TO CLEAR THIS LEVEL!", cx, 478, 8, "#ff8a7a", "center");
 
   txt("PLAYING AS", cx, 500, 8, "#c8d3ff", "center");
@@ -3759,6 +3904,17 @@ function drawCharMaker(t) {
   CHAR_ROWS.forEach((label, i) => {
     const y = 236 + i * 34, sel = i === cm.row;
     if (sel) { ctx.fillStyle = "rgba(255,212,71,0.16)"; rr(50, y - 6, VIEW_W - 100, 28, 6); ctx.fill(); }
+    if (IS_TOUCH) {                                   // tap the left or right half of a row to change it
+      uiButton("", 50, y - 6, VIEW_W - 100, 28, m => {
+        cm.row = i;
+        if (label === "NAME") {
+          const n = window.prompt("Character name (up to 8 letters):", c.name);
+          if (n !== null) c.name = n.toUpperCase().replace(/[^A-Z0-9 ]/g, "").slice(0, 8);
+        } else {
+          handleCharKey({ code: m.x < VIEW_W / 2 ? "ArrowLeft" : "ArrowRight", key: "" });
+        }
+      }, "", 0, false);
+    }
     txt(label, 64, y + 2, 8, sel ? "#ffd447" : "#c8d3ff");
     const vx = VIEW_W - 150;
     if (label === "CHARACTER") txt(`< ${sandbox.selected + 1} OF ${sandbox.characters.length} >`, vx + 40, y + 2, 9, "#ffffff", "center");
@@ -3776,9 +3932,17 @@ function drawCharMaker(t) {
       txt(">", vx + 72, y + 2, 9, "#ffffff");
     }
   });
-  const hints = ["UP / DOWN = PICK A ROW", "LEFT / RIGHT = CHANGE IT", "TYPE ON THE NAME ROW",
-                 "N = NEW CHARACTER   DEL = DELETE", "ENTER or ESC = SAVE"];
-  hints.forEach((h, i) => txt(h, cx, 520 + i * 16, 7, "#c8d3ff", "center"));
+  if (IS_TOUCH) {
+    txt("TAP THE LEFT OR RIGHT SIDE OF A ROW", cx, 514, 7, "#c8d3ff", "center");
+    const key = code => () => handleCharKey({ code, key: "" });
+    uiButton("NEW", 60, 536, 110, 32, key("Insert"), "#7dff7a", 9);
+    uiButton("DELETE", 185, 536, 110, 32, key("Delete"), "#ff8a7a", 9);
+    uiButton("DONE", 310, 536, 110, 32, key("Escape"), "#ffd447", 9);
+  } else {
+    const hints = ["UP / DOWN = PICK A ROW", "LEFT / RIGHT = CHANGE IT", "TYPE ON THE NAME ROW",
+                   "N = NEW CHARACTER   DEL = DELETE", "ENTER or ESC = SAVE"];
+    hints.forEach((h, i) => txt(h, cx, 520 + i * 16, 7, "#c8d3ff", "center"));
+  }
   txt("YOUR CHARACTER PLAYS IN THE MAIN GAME TOO!", cx, 610, 7, "#7dff7a", "center");
 }
 
@@ -3830,6 +3994,7 @@ function render(t) {
   textQueue.length = 0;
 
   // 3) Menus and the HUD, drawn at full sharpness
+  uiButtons.length = 0;
   if (inRun) {
     if (st.radar) drawRadar();
     drawHUD();
@@ -3845,6 +4010,64 @@ function render(t) {
 }
 
 // =====================================================================
+//  ON-SCREEN BUTTONS for touch screens (Round 9)
+//  "Hold" buttons act like holding a key; "tap" buttons act like pressing one.
+// =====================================================================
+const pad = document.getElementById("pad"), pauseBtn = document.getElementById("pauseBtn");
+const padExtras = document.getElementById("padExtras");
+
+function bindPadButton(b) {
+  const code = b.dataset.hold, tap = b.dataset.tap;
+  const press = e => {
+    e.preventDefault();
+    if (b.dataset.down) return;
+    b.dataset.down = "1";
+    b.classList.add("on");
+    if (code) { keys[code] = true; onKeyPress({ code, key: "", repeat: false }); }
+    else if (tap === "spell") { if (state === "playing") castDogSpell(); }
+    else if (tap) onKeyPress({ code: tap, key: "", repeat: false });
+  };
+  const release = () => {
+    if (!b.dataset.down) return;
+    delete b.dataset.down;
+    b.classList.remove("on");
+    if (code) keys[code] = false;
+  };
+  b.addEventListener("pointerdown", e => {
+    try { b.releasePointerCapture(e.pointerId); } catch (err) { /* fine */ }   // lets a finger slide to the next button
+    press(e);
+  });
+  b.addEventListener("pointerenter", e => { if (e.pointerType !== "mouse" && e.pressure > 0) press(e); });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, release);
+  b.addEventListener("contextmenu", e => e.preventDefault());
+}
+document.querySelectorAll("#pad .pb, #pauseBtn").forEach(bindPadButton);
+
+// Ability buttons only show up once you have that upgrade.
+let padExtrasKey = "";
+function updatePad() {
+  const show = IS_TOUCH && state === "playing";
+  pad.classList.toggle("hidden", !show);
+  pauseBtn.classList.toggle("hidden", !show);
+  if (!show) return;
+  const extras = [[st.dive, "DIVE", "ArrowDown"], [st.dash, "DASH", "ShiftLeft"], [st.timeBubble, "SLOW", "KeyQ"],
+                  [st.blink, "BLINK", "KeyE"], [st.cloud, "CLOUD", "KeyC"]].filter(x => x[0]);
+  const key = extras.map(x => x[1]).join();
+  if (key === padExtrasKey) return;
+  padExtrasKey = key;
+  padExtras.innerHTML = "";
+  for (const [, label, codeName] of extras) {
+    const b = document.createElement("button");
+    b.className = "pb small";
+    b.dataset.tap = codeName;
+    b.textContent = label;
+    bindPadButton(b);
+    padExtras.appendChild(b);
+  }
+}
+window.addEventListener("orientationchange", () => setTimeout(resize, 200));
+
+// =====================================================================
 //  MAIN LOOP (fixed steps so the jumping feels the same on every computer)
 // =====================================================================
 const STEP = 1 / 120;
@@ -3854,6 +4077,7 @@ function frame(now) {
   last = now;
   while (acc >= STEP) { update(STEP); acc -= STEP; }
   render(now / 1000);
+  updatePad();
   requestAnimationFrame(frame);
 }
 showTitle();
