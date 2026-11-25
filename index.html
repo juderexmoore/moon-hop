@@ -84,6 +84,7 @@ const CREDITS = [
   { round: 18, who: "G.", what: "Play as a Boston terrier! A new BODY choice in the character maker, with a space vest, bubble helmet and tiny jetpack, plus a ready-made terrier named BOSTON." },
   { round: 19, who: "G.", what: "OG Astro, a mini version of the very first Moon Hop astronaut, is a free pet for everyone. Its BACKUP JETPACK gives you an extra mid-air jump every 12 seconds." },
   { round: 20, who: "G.", what: "Put your whole name on the leaderboard (up to 10 letters) instead of just 3 initials." },
+  { round: 21, who: "G.", what: "MINI-GAMES mode: play any of the 10 mini-games straight from the title screen, and beat your best score and stars." },
 ];
 
 // ---------- Tuning ----------
@@ -1275,6 +1276,7 @@ function onKeyPress(e) {
     else if (c === "KeyX") openExplore();
     else if (c === "KeyA") startArcade();
     else if (c === "KeyP") openPets();
+    else if (c === "KeyM") openMiniMenu();
     else if (c === "Digit3") toggle3D();
     else if (c === "KeyB" && bestBiome > 0) startBiome = (startBiome + 1) % (bestBiome + 1);   // choose a start biome
   } else if (state === "sandbox") {
@@ -1310,6 +1312,8 @@ function onKeyPress(e) {
     sideQuestKey(c);
   } else if (state === "pets") {
     petsKey(c);
+  } else if (state === "mgmenu") {
+    miniMenuKey(c);
   }
   if (/^(Arrow|Key[ADW]$)/.test(c)) mouseSteer = false;           // keyboard steering wins over the mouse
 }
@@ -4636,17 +4640,18 @@ function drawTitle(t) {
   if (USE_BUTTONS()) {
     uiButton("PLAY", cx - 206, 498, 200, 36, startRun, "#ffffff", 12);
     uiButton("ARCADE: 1 LIFE", cx + 6, 498, 200, 36, startArcade, "#ff8a7a", 9);
-    uiButton("SANDBOX", cx - 206, 540, 78, 28, openSandbox, "#7dff7a", 7);
-    uiButton("EXPLORE", cx - 123, 540, 78, 28, openExplore, "#5ad1ff", 7);
-    uiButton("PETS", cx - 39, 540, 78, 28, openPets, "#ff8fd0", 7);
-    uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx + 45, 540, 78, 28, toggle3D, "#ffd447", 7);
-    uiButton("CREDITS", cx + 128, 540, 78, 28, openCredits, "#c8d3ff", 7);
+    uiButton("SANDBOX", cx - 208, 540, 66, 28, openSandbox, "#7dff7a", 7);
+    uiButton("EXPLORE", cx - 138, 540, 66, 28, openExplore, "#5ad1ff", 7);
+    uiButton("PETS", cx - 68, 540, 66, 28, openPets, "#ff8fd0", 7);
+    uiButton("GAMES", cx + 2, 540, 66, 28, openMiniMenu, "#c39bff", 7);
+    uiButton(VIEW3D ? "3D ON" : "3D OFF", cx + 72, 540, 66, 28, toggle3D, "#ffd447", 7);
+    uiButton("CREDITS", cx + 142, 540, 66, 28, openCredits, "#c8d3ff", 7);
     ctx.save();
     ctx.translate(0, 18);                    // the save notice goes below the buttons
   } else {
     if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 500, 13, "#ffffff", "center");
     txt("A = ARCADE: 1 LIFE, IT NEVER ENDS!", cx, 520, 8, "#ff8a7a", "center");
-    txt(`S SANDBOX  X EXPLORE  P PETS  3 3D: ${VIEW3D ? "ON" : "OFF"}  C CREDITS`, cx, 538, 7, "#c8d3ff", "center");
+    txt(`S SANDBOX  X EXPLORE  P PETS  M MINI-GAMES  3 3D  C CREDITS`, cx, 538, 7, "#c8d3ff", "center");
   }
   drawSaveNotice(cx);
   if (USE_BUTTONS()) ctx.restore();
@@ -5126,6 +5131,7 @@ function render(t) {
   else if (state === "explore") drawExploreHUD(t);
   else if (state === "sidequest" && sq) drawSideQuestHUD(t);
   else if (state === "pets") drawPets(t);
+  else if (state === "mgmenu") drawMiniMenu(t);
 }
 
 const inRunState = () => state === "playing" || state === "paused" || state === "choose" || state === "over";
@@ -5743,13 +5749,61 @@ function drawPortal(t) {
   txt(gold ? "SIDE QUEST!" : "?", x, y - 50, gold ? 8 : 10, gold ? "#ffd447" : "#ffffff", "center");
 }
 
+// ---------- MINI-GAMES MODE (Round 20b): play any mini-game from the title screen ----------
+// No climb power-ups here (you're not climbing). Your best score and stars for each game are saved.
+let mgBest = (() => { try { const d = JSON.parse(localStorage.getItem("moonhop.minibest.v1")); return d && typeof d === "object" ? d : {}; } catch (e) { return {}; } })();
+let mgSel = 0;
+const openMiniMenu = () => { state = "mgmenu"; };
+function startFreeMinigame(i) {
+  startMinigame(i);
+  mg.free = true;
+  mg.best = mgBest[i] || { score: 0, stars: 0 };
+}
+function miniMenuKey(c) {
+  const n = MINIGAMES.length;
+  if (c === "ArrowLeft" || c === "KeyA") mgSel = (mgSel + n - 1) % n;
+  else if (c === "ArrowRight" || c === "KeyD") mgSel = (mgSel + 1) % n;
+  else if (c === "ArrowUp" || c === "KeyW") mgSel = (mgSel + n - 2) % n;
+  else if (c === "ArrowDown" || c === "KeyS") mgSel = (mgSel + 2) % n;
+  else if (c === "Enter" || c === "Space") startFreeMinigame(mgSel);
+  else if (c === "KeyR") startFreeMinigame(Math.floor(Math.random() * n));
+  else if (c === "Escape" || c === "KeyM") state = "title";
+}
+function drawMiniMenu(t) {
+  const cx = VIEW_W / 2;
+  panel(20, 16, VIEW_W - 40, 690);
+  txt("MINI-GAMES", cx, 30, 18, "#c39bff", "center");
+  txt("PLAY ANY OF THEM, AS MUCH AS YOU LIKE!", cx, 56, 7, "#c8d3ff", "center");
+  MINIGAMES.forEach((g, i) => {
+    const col = i % 2, row = Math.floor(i / 2), x = 34 + col * 210, y = 76 + row * 92, sel = i === mgSel, b = mgBest[i];
+    ctx.fillStyle = sel ? "rgba(195,155,255,0.2)" : "rgba(255,255,255,0.05)";
+    rr(x, y, 202, 84, 8); ctx.fill();
+    if (sel) { ctx.strokeStyle = "#c39bff"; ctx.lineWidth = 2; ctx.stroke(); }
+    txt(g.name, x + 101, y + 10, 8, "#ffd447", "center");
+    txt(g.how[0], x + 101, y + 25, 5, "#c8d3ff", "center");
+    txt(g.how[1], x + 101, y + 34, 5, "#c8d3ff", "center");
+    for (let k = 0; k < 3; k++) drawStar(x + 76 + k * 24, y + 55, 9, b && k < b.stars ? "#ffd447" : "rgba(255,255,255,0.18)");
+    txt(b ? `BEST ${b.score}` : "NOT PLAYED YET", x + 101, y + 68, 6, b ? "#7dff7a" : "rgba(255,255,255,0.4)", "center");
+    if (USE_BUTTONS()) uiButton("", x, y, 202, 84, () => { if (mgSel === i) startFreeMinigame(i); else mgSel = i; }, "", 0, false);
+  });
+  if (USE_BUTTONS()) {
+    txt(`${TAP()} A GAME, THEN ${TAP()} IT AGAIN TO PLAY`, cx, 542, 7, "#c8d3ff", "center");
+    uiButton("PLAY", cx - 160, 560, 100, 34, () => startFreeMinigame(mgSel), "#7dff7a", 10);
+    uiButton("RANDOM", cx - 50, 560, 100, 34, () => startFreeMinigame(Math.floor(Math.random() * MINIGAMES.length)), "#ffd447", 9);
+    uiButton("BACK", cx + 60, 560, 100, 34, () => { state = "title"; }, "#c8d3ff", 9);
+  } else {
+    txt("ARROWS = CHOOSE   ENTER = PLAY", cx, 552, 8, "#c8d3ff", "center");
+    txt("R = RANDOM GAME   ESC = BACK", cx, 572, 8, "#c8d3ff", "center");
+  }
+}
+
 // ---------- Playing a mini-game ----------
-function startMinigame() {
-  let i;
-  do { i = Math.floor(Math.random() * MINIGAMES.length); } while (i === lastGame && MINIGAMES.length > 1);
+function startMinigame(pickI) {
+  let i = pickI;
+  if (i === undefined) do { i = Math.floor(Math.random() * MINIGAMES.length); } while (i === lastGame && MINIGAMES.length > 1);
   lastGame = i;
   const game = MINIGAMES[i];
-  mg = { game, phase: "intro", timer: 2.6, elapsed: 0, score: 0, done: false, stars: 0, prize: [] };
+  mg = { game, gi: i, phase: "intro", timer: 2.6, elapsed: 0, score: 0, done: false, stars: 0, prize: [] };
   game.init(mg);
   portal = null;
   for (const k in keys) keys[k] = false;
@@ -5768,11 +5822,19 @@ function updateMinigame(dt) {
       g.phase = "result";
       g.timer = 3.5;
       g.stars = g.game.stars(g);
-      const wins = g.stars >= 3 ? 2 : g.stars >= 1 ? 1 : 0;       // win = a permanent power-up
-      for (let k = 0; k < wins; k++) g.prize.push(grantRelic());
+      if (g.free) {                                              // mini-games mode: save your best
+        const b = mgBest[g.gi] || { score: 0, stars: 0 };
+        g.newBest = g.score > b.score;
+        mgBest[g.gi] = { score: Math.max(b.score, g.score), stars: Math.max(b.stars, g.stars) };
+        try { localStorage.setItem("moonhop.minibest.v1", JSON.stringify(mgBest)); } catch (e) { /* just for this visit */ }
+      } else {
+        const wins = g.stars >= 3 ? 2 : g.stars >= 1 ? 1 : 0;       // win = a permanent power-up
+        for (let k = 0; k < wins; k++) g.prize.push(grantRelic());
+      }
     }
   } else {
     g.timer -= dt;
+    if (g.timer <= 0 && g.free) { mg = null; state = "mgmenu"; return; }   // back to the mini-games menu
     if (g.timer <= 0) {                                          // back to the climb
       mg = null;
       state = "playing";
@@ -5810,7 +5872,7 @@ function drawMinigameHUD(t) {
     txt(game.how[0], cx, 270, 8, "#ffffff", "center");
     txt(game.how[1], cx, 290, 8, "#ffffff", "center");
     txt(IS_TOUCH ? game.tapHelp : mouseMode ? game.tapHelp.replace(/TAP/g, "CLICK") : game.keysHelp, cx, 330, 8, "#7dff7a", "center");
-    txt("WIN = A PERMANENT POWER-UP!", cx, 366, 8, "#ffb347", "center");
+    txt(g.free ? (g.best.score ? `YOUR BEST: ${g.best.score}` : "GET 3 STARS!") : "WIN = A PERMANENT POWER-UP!", cx, 366, 8, "#ffb347", "center");
     txt(String(Math.max(1, Math.ceil(g.timer - 0.6))), cx, 410, 28, "#ffffff", "center");
     return;
   }
@@ -5831,6 +5893,11 @@ function drawMinigameHUD(t) {
   txt(g.stars >= 1 ? "YOU WON!" : "NICE TRY!", cx, 214, 18, g.stars >= 1 ? "#7dff7a" : "#ff8a7a", "center");
   for (let k = 0; k < 3; k++) drawStar(cx - 50 + k * 50, 280, 18, k < g.stars ? "#ffd447" : "rgba(255,255,255,0.2)");
   txt(`SCORE ${g.score}`, cx, 314, 10, "#ffffff", "center");
+  if (g.free) {
+    txt(g.newBest ? "NEW BEST SCORE!" : `BEST: ${mgBest[g.gi].score}`, cx, 352, 10, g.newBest ? "#7dff7a" : "#c8d3ff", "center");
+    txt("BACK TO THE MINI-GAMES...", cx, 456, 8, "#c8d3ff", "center");
+    return;
+  }
   if (!g.prize.length) txt("WIN (1 STAR) FOR A POWER-UP", cx, 352, 8, "#c8d3ff", "center");
   g.prize.forEach((r, k) => {
     txt(`${r.name} x${relics[r.id] || 1}`, cx, 344 + k * 40, 11, r.color, "center");
