@@ -81,6 +81,7 @@ const CREDITS = [
   { round: 15, who: "G.", what: "Explore mode! Walk around a 3D world with Moon Base, the Frosty Peaks, the Jungle, Sunny Beach and the Crater Fields. Do quests for coins and spend them at Bolt's Shop on gear and power-ups for your next climb." },
   { round: 16, who: "J.", what: "Earth's mantle under the sea, Jupiter and Saturn, ARCADE mode (1 life, never ends, past Uranus, Neptune and Pluto into the Endless Void), a DAMAGE % meter where knockback grows, spiky obstacles, more enemies, and chunkier pixels." },
   { round: 17, who: "Mommy", what: "Side quests! Gold portals open side-scrolling levels in 10 worlds, starting in a 1700s Scottish castle. Beat each boss to free a caged pet (first up: Molly, a black dachshund + chihuahua), then bring one pet on your climb for its special power. Plus the PETS menu, starring Beatrice." },
+  { round: 18, who: "G.", what: "Play as a Boston terrier! A new BODY choice in the character maker, with a space vest, bubble helmet and tiny jetpack, plus a ready-made terrier named BOSTON." },
 ];
 
 // ---------- Tuning ----------
@@ -322,7 +323,9 @@ const SANDBOX_KEY = "moonhop.sandbox.v1";
 const PALETTE = ["#f5f7fc", "#aab3c8", "#3a3a48", "#ff5a5a", "#ff9f40", "#ffd447", "#7dff7a",
                  "#3fd0c9", "#5a9bff", "#a565f0", "#ff8fd0", "#8b5a2b"];
 const HATS = ["NONE", "CAP", "CROWN", "PARTY HAT", "BOW", "ANTENNA", "COWBOY HAT", "FLOWER"];
-const DEFAULT_CHARACTER = { name: "ASTRO", suit: 0, visor: 8, pack: 1, hat: 0, hatColor: 3, wings: 9 };
+const DEFAULT_CHARACTER = { name: "ASTRO", suit: 0, visor: 8, pack: 1, hat: 0, hatColor: 3, wings: 9, body: 0 };
+const BODIES = ["ASTRONAUT", "BOSTON TERRIER"];        // Round 18: you can play as a Boston terrier
+const TERRIER_CHARACTER = { name: "BOSTON", suit: 3, visor: 7, pack: 0, hat: 0, hatColor: 3, wings: 9, body: 1 };
 const TOOLS = [
   { id: "plat", name: "PLATFORM", tip: "DRAG LEFT TO RIGHT TO DRAW A PLATFORM" },
   { id: "move", name: "MOVING PLATFORM", tip: "DRAW ONE, OR CLICK A PLATFORM TO MAKE IT MOVE" },
@@ -1154,6 +1157,12 @@ function cleanSandbox(d) {
   const chars = d && Array.isArray(d.characters) && d.characters.length ? d.characters : [DEFAULT_CHARACTER];
   out.characters = chars.slice(0, 8).map(c => ({ ...DEFAULT_CHARACTER, ...c }));
   out.selected = clamp(Number(d && d.selected) || 0, 0, out.characters.length - 1);
+  out.terrierAdded = !!(d && d.terrierAdded);
+  if (!out.terrierAdded && out.characters.length < 8) {   // Round 18: a Boston terrier joins your characters
+    out.characters.push({ ...TERRIER_CHARACTER });
+    out.terrierAdded = true;
+    out.isNew = true;
+  }
   return out;
 }
 
@@ -1161,6 +1170,7 @@ let sandbox = (() => {
   try { return cleanSandbox(JSON.parse(localStorage.getItem(SANDBOX_KEY) || "null")); }
   catch (e) { return cleanSandbox(null); }
 })();
+if (sandbox.isNew) { delete sandbox.isNew; try { localStorage.setItem(SANDBOX_KEY, JSON.stringify(sandbox)); } catch (e) { /* fine */ } }
 const currentChar = () => sandbox.characters[sandbox.selected] || DEFAULT_CHARACTER;
 
 function saveSandbox() {
@@ -1174,7 +1184,11 @@ function saveSandbox() {
 if (SERVED) {
   fetch("/api/sandbox", { cache: "no-store" })
     .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
-    .then(d => { if (d && Array.isArray(d.levels)) sandbox = cleanSandbox(d); })
+    .then(d => {
+      if (!d || !Array.isArray(d.levels)) return;
+      sandbox = cleanSandbox(d);
+      if (sandbox.isNew) { delete sandbox.isNew; saveSandbox(); }
+    })
     .catch(() => {});
 }
 
@@ -1532,7 +1546,7 @@ canvas.addEventListener("mousedown", ev => { if (ev.button === 1) ev.preventDefa
 canvas.addEventListener("contextmenu", ev => ev.preventDefault());
 
 // ---------- Character maker ----------
-const CHAR_ROWS = ["CHARACTER", "NAME", "SUIT", "VISOR", "BACKPACK", "HAT", "HAT COLOR", "DOG WINGS"];
+const CHAR_ROWS = ["CHARACTER", "NAME", "BODY", "SUIT", "VISOR", "BACKPACK", "HAT", "HAT COLOR", "DOG WINGS"];
 const COLOR_ROWS = { SUIT: "suit", VISOR: "visor", BACKPACK: "pack", "HAT COLOR": "hatColor", "DOG WINGS": "wings" };
 
 function handleCharKey(e) {
@@ -1552,6 +1566,8 @@ function handleCharKey(e) {
     sandbox.selected = Math.min(sandbox.selected, sandbox.characters.length - 1);
   } else if (step && row === "CHARACTER") {
     sandbox.selected = (sandbox.selected + step + sandbox.characters.length) % sandbox.characters.length;
+  } else if (step && row === "BODY") {
+    ch.body = ((ch.body || 0) + step + BODIES.length) % BODIES.length;
   } else if (step && row === "HAT") {
     ch.hat = (ch.hat + step + HATS.length) % HATS.length;
   } else if (step && COLOR_ROWS[row]) {
@@ -4089,7 +4105,40 @@ function drawEffects() {
 
 // The astronaut, in your character's colors and hat. Drawn facing right with
 // the feet at (0, 0); the caller moves, flips and sizes it.
+// Round 18: a Boston terrier in a space vest and bubble helmet. Same size and feet as the astronaut.
+function drawTerrierHero(c, air, swing) {
+  const black = "#1b1b22", white = "#ffffff", el = (x, y, rx, ry, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); };
+  const tri = (a, b, d, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.lineTo(...d); ctx.closePath(); ctx.fill(); };
+  const lift = air ? 3 : 0;
+  ctx.fillStyle = PALETTE[c.pack];                          // tiny jetpack
+  rr(-14, -24, 6, 10, 2); ctx.fill();
+  [[-10, Math.max(0, swing)], [-5, Math.max(0, -swing)], [4, Math.max(0, -swing)], [8, Math.max(0, swing)]].forEach(([lx, up]) => {
+    ctx.fillStyle = black; ctx.fillRect(lx, -8 - up - lift, 3.5, 8);
+    ctx.fillStyle = white; ctx.fillRect(lx, -2 - up - lift, 3.5, 2);
+  });
+  el(-12, -15, 2.5, 2.2, black);                            // stubby tail
+  el(0, -14, 12.5, 7.5, black);                             // body
+  el(7, -12, 4.5, 5.5, white);                              // white chest
+  ctx.fillStyle = PALETTE[c.suit];                          // space vest
+  rr(-8, -21, 12, 10, 3); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.fillRect(-6, -19, 8, 2);
+  el(10, -25, 8, 7.5, black);                               // head
+  tri([5, -29], [3, -41], [10, -31], black); tri([11, -31], [15, -42], [17, -29], black);   // big bat ears
+  tri([5.5, -31], [4.5, -38], [8.5, -31], "#f2a3b3"); tri([12.5, -31], [14.5, -38], [15.5, -30], "#f2a3b3");
+  ctx.fillStyle = white; ctx.fillRect(9.2, -33, 2.6, 9);    // white blaze
+  el(15.5, -21.5, 4.6, 3.4, white);                         // muzzle
+  el(19.4, -22.6, 1.6, 1.3, black);                         // nose
+  el(13.5, -27, 2.7, 2.7, white); el(14, -27, 1.8, 1.8, "#2a1a1a"); el(14.6, -27.7, 0.6, 0.6, white);
+  const vc = hexRGB(PALETTE[c.visor]);                      // the bubble helmet (your visor color)
+  ctx.fillStyle = `rgba(${vc[0]},${vc[1]},${vc[2]},0.16)`;
+  ctx.strokeStyle = `rgba(${vc[0]},${vc[1]},${vc[2]},0.85)`; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(11, -28, 13, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fillRect(4, -36, 3, 2);
+  ctx.save(); ctx.translate(11, -4); drawHat(c); ctx.restore();
+}
+
 function drawAstronaut(c, air, swing) {
+  if (c.body === 1) { drawTerrierHero(c, air, swing); return; }
   const suit = PALETTE[c.suit], black = [0, 0, 0], white = [255, 255, 255];
 
   ctx.fillStyle = PALETTE[c.pack];                        // backpack
@@ -4992,7 +5041,7 @@ function drawCharMaker(t) {
   drawDogAt(cx + 70, 120 + Math.sin(t * 3) * 4, -1, 2.4, t);
 
   CHAR_ROWS.forEach((label, i) => {
-    const y = 236 + i * 34, sel = i === cm.row;
+    const y = 232 + i * 30, sel = i === cm.row;
     if (sel) { ctx.fillStyle = "rgba(255,212,71,0.16)"; rr(50, y - 6, VIEW_W - 100, 28, 6); ctx.fill(); }
     if (USE_BUTTONS()) {                                   // tap the left or right half of a row to change it
       uiButton("", 50, y - 6, VIEW_W - 100, 28, m => {
@@ -5010,6 +5059,7 @@ function drawCharMaker(t) {
     if (label === "CHARACTER") txt(`< ${sandbox.selected + 1} OF ${sandbox.characters.length} >`, vx + 40, y + 2, 9, "#ffffff", "center");
     else if (label === "NAME") txt(c.name + (sel && Math.floor(t * 3) % 2 ? "_" : ""), vx - 20, y + 2, 9, "#ffffff");
     else if (label === "HAT") txt(`< ${HATS[c.hat]} >`, vx + 40, y + 2, 8, "#ffffff", "center");
+    else if (label === "BODY") txt(`< ${BODIES[c.body || 0]} >`, vx + 30, y + 2, 7, "#ffffff", "center");
     else {
       const hex = PALETTE[c[COLOR_ROWS[label]]];
       txt("<", vx, y + 2, 9, "#ffffff");
@@ -6479,10 +6529,30 @@ function exDrawSprites(t, dX, dY) {
   }
 }
 
+function exDrawTerrierBack(c, walk) {                     // the Boston terrier, seen from behind
+  const black = "#1b1b22", el = (x, y, rx, ry, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); };
+  ctx.scale(0.8, 0.8);
+  for (const [lx, up] of [[-9, Math.max(0, walk)], [5, Math.max(0, -walk)]]) { ctx.fillStyle = black; ctx.fillRect(lx, -9 - up, 5, 9); ctx.fillStyle = "#ffffff"; ctx.fillRect(lx, -2 - up, 5, 2); }
+  el(0, -15, 12, 10, black);
+  el(0, -9, 2.6, 2.4, "#2a2a33");                           // stubby tail
+  ctx.fillStyle = PALETTE[c.suit]; rr(-9, -22, 18, 9, 3); ctx.fill();
+  ctx.fillStyle = PALETTE[c.pack]; rr(-5, -26, 10, 9, 2); ctx.fill();
+  el(0, -32, 9, 8.5, black);
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = black; ctx.beginPath(); ctx.moveTo(s * 3, -37); ctx.lineTo(s * 8, -50); ctx.lineTo(s * 9, -35); ctx.closePath(); ctx.fill();
+  }
+  const vc = hexRGB(PALETTE[c.visor]);
+  ctx.strokeStyle = `rgba(${vc[0]},${vc[1]},${vc[2]},0.85)`; ctx.lineWidth = 1.5;
+  ctx.fillStyle = `rgba(${vc[0]},${vc[1]},${vc[2]},0.16)`;
+  ctx.beginPath(); ctx.arc(0, -36, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.save(); ctx.translate(0, -9); drawHat(c); ctx.restore();
+}
+
 function exDrawPlayerBack(t) {                            // your astronaut, seen from behind
   const c = currentChar(), suit = PALETTE[c.suit], dark = mixHex(suit, [0, 0, 0], 0.3);
   const walk = ex.moving ? Math.sin(ex.t * 11) * 2.5 : 0;
   if (ex.hurt > 0 && Math.floor(t * 12) % 2 === 0) ctx.globalAlpha *= 0.45;
+  if (c.body === 1) { exDrawTerrierBack(c, walk); return; }
   ctx.scale(0.72, 0.72);
   ctx.fillStyle = dark;
   rr(-8, -10 + Math.max(0, walk), 6, 10, 2); ctx.fill();
