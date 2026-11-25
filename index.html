@@ -2215,6 +2215,7 @@ function useCloud() {
 // She flies just behind you. CTRL+B: she sprays glitter from her butt, and it
 // becomes a purple cloud that keeps enemies off you for a few seconds.
 function castDogSpell() {
+  if (!beatriceOn()) return;                              // Beatrice stayed home this climb
   const p = player, sp = SPELLS[p.spells[p.spellSel]];
   if ((p.spellCds[sp.id] || 0) > 0) return;
   p.spellCds[sp.id] = sp.cd;
@@ -2684,7 +2685,7 @@ function update(dt) {
     updateMovers(dt);
     updateTempPlats(dt);
     updatePlayer(dt);
-    updateDog(dt);
+    if (beatriceOn()) updateDog(dt);
     updatePet(dt);
     checkSweepers();
     updateBlaster(dt);
@@ -4305,6 +4306,7 @@ function drawPlayer(t) {
 }
 
 function drawDog(t) {
+  if (!beatriceOn()) return;
   const sy = toScreenY(dog.y) + Math.sin(t * 3) * 3;      // gentle bobbing
   if (sy < -40 || sy > VIEW_H + 40) return;
   drawDogAt(dog.x, sy, dog.facing, 1.1, t);
@@ -4434,8 +4436,8 @@ function drawAbilityHUD() {
   const sp = SPELLS[p.spells[p.spellSel]];
   if (p.spellTime > 0) lines.push([`PURPLE CLOUD ${Math.ceil(p.spellTime)}`, "#e0a8ff"]);
   if (p.domeTime > 0) lines.push([`SAFETY DOME ${Math.ceil(p.domeTime)}`, "#78ffc8"]);
-  lines.push(timer(`${IS_TOUCH ? "SPELL:" : mouseMode ? "MID CLICK" : "CTRL+B"} ${sp.name}`, p.spellCds[sp.id] || 0));
-  if (p.spells.length > 1) lines.push([`${IS_TOUCH ? "NEXT" : mouseMode ? "WHEEL" : "V"} = NEXT SPELL (${p.spellSel + 1}/${p.spells.length})`, "rgba(255,255,255,0.6)"]);
+  if (beatriceOn()) lines.push(timer(`${IS_TOUCH ? "SPELL:" : mouseMode ? "MID CLICK" : "CTRL+B"} ${sp.name}`, p.spellCds[sp.id] || 0));
+  if (beatriceOn() && p.spells.length > 1) lines.push([`${IS_TOUCH ? "NEXT" : mouseMode ? "WHEEL" : "V"} = NEXT SPELL (${p.spellSel + 1}/${p.spells.length})`, "rgba(255,255,255,0.6)"]);
   if (st.rebounds) { const n = st.rebounds - p.reboundsUsed; lines.push([`BOUNCES ${n}`, n > 0 ? on : dim]); }
   if (st.safetyFlag) lines.push(p.flagUsed ? ["FLAG USED", dim] : ["FLAG READY", on]);
   if (st.shield) lines.push(p.shieldReady ? ["SHIELD READY", "#8fe3ff"] : [`SHIELD ${Math.ceil(p.shieldTimer)}`, dim]);
@@ -4573,7 +4575,7 @@ function drawHUD() {
     ctx.globalAlpha = Math.min(1, sectionFlash / 0.5);
     txt(s.name, VIEW_W / 2, 172, 18, s.color, "center");
     txt(s.tip, VIEW_W / 2, 200, 8, "#ffffff", "center");
-    if (newSpell) txt(`NEW DOG SPELL: ${newSpell}!`, VIEW_W / 2, 218, 8, "#e0a8ff", "center");
+    if (newSpell && beatriceOn()) txt(`NEW DOG SPELL: ${newSpell}!`, VIEW_W / 2, 218, 8, "#e0a8ff", "center");
     const g = GIVERS[s.id];                          // what this biome's gifts do
     txt(`CATCH ${g.itemName}: ${POWERS[g.power].name}!`, VIEW_W / 2, 234, 8, POWERS[g.power].color, "center");
     ctx.globalAlpha = 1;
@@ -4628,7 +4630,7 @@ function drawTitle(t) {
     txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
   }
   const pet = activePet();
-  txt(pet ? `PET ON YOUR CLIMB: ${petById(pet).name}` : "FREE PETS IN GOLD SIDE QUEST PORTALS!", cx, 254, 7, "#ff8fd0", "center");
+  txt(`PET ON YOUR CLIMB: ${pet ? petById(pet).name : "BEATRICE"}   (P = PETS)`, cx, 254, 7, "#ff8fd0", "center");
   const showArc = board(true).length > 0 && Math.floor(t / 5) % 2 === 1;     // the title takes turns showing both boards
   txt(showArc ? "ARCADE TOP 10" : "TOP CLIMBERS", cx, 266, 12, showArc ? "#ff8a7a" : "#ffd447", "center");
   drawBoard(cx, 292, -1, t, board(showArc));
@@ -6505,7 +6507,8 @@ function exDrawSprites(t, dX, dY) {
     });
   }
   add(EX_SHOP_SPOT.at[0], EX_SHOP_SPOT.at[1], 0.95, exDrawShop, { label: "BOLT'S SHOP", labelH: 2.3, labelColor: "#5ad1ff", farLabel: true });
-  add(ex.dog.x, ex.dog.y, 0.3, s => drawDogAt(0, -30 + Math.sin(t * 3) * 2, s.sx < VIEW_W / 2 ? 1 : -1, 0.7, t));
+  if (beatriceOn()) add(ex.dog.x, ex.dog.y, 0.3, s => drawDogAt(0, -30 + Math.sin(t * 3) * 2, s.sx < VIEW_W / 2 ? 1 : -1, 0.7, t));
+  else add(ex.dog.x, ex.dog.y, 0.3, s => drawPet(activePet(), 0, 0, 0.9, s.sx < VIEW_W / 2 ? 1 : -1, t));
   add(ex.p.x, ex.p.y, 0.5, () => exDrawPlayerBack(t), { noClip: true });
   list.sort((a, b) => b.depth - a.depth);
 
@@ -6926,8 +6929,9 @@ const OG_PET = { id: "og", name: "OG ASTRO", breed: "THE ORIGINAL ASTRONAUT", po
   story: "OG Astro was the very first climber in Moon Hop, back in Round 0, before there were poppies, bosses or biomes. Now OG is mini-sized and loves cheering on new climbers." };
 const OG_LOOK = { name: "OG", suit: 0, visor: 8, pack: 1, hat: 0, hatColor: 3, wings: 9, body: 0 };   // the Round 0 astronaut
 const petById = id => (id === "og" ? OG_PET : PETS.find(p => p.id === id));
+const beatriceOn = () => !activePet();                  // one pet at a time: Beatrice comes unless you pick another pet
 const BEATRICE = { id: "beatrice", name: "BEATRICE", breed: "BOSTON TERRIER WITH WINGS", power: "DOG SPELLS", color: "#c39bff",
-  desc: "Always with you. She learns a new spell in each biome: CTRL+B (or SPELL) casts it, V (or NEXT) switches.",
+  desc: "Your pet unless you pick another one. She learns a new spell in each biome: CTRL+B (or SPELL) casts it, V (or NEXT) switches.",
   story: "Beatrice has flown beside you since the very first climb. Her whirly tail spins when she's happy, which is always." };
 
 let petSave = (() => {
@@ -7316,7 +7320,7 @@ function sqHitBoss(n) {
   q.bshots = [];
   q.phase = "freed";
   q.timer = 3.4;
-  if (q.newPet) { petSave.freed.push(q.pet.id); if (!petSave.chosen) petSave.chosen = q.pet.id; savePets(); }
+  if (q.newPet) { petSave.freed.push(q.pet.id); savePets(); }
   else q.prize = grantRelic();                           // already freed: a power-up for this climb instead
   confettiBurst();
 }
@@ -7689,7 +7693,8 @@ function drawSideQuest(t) {
   }
   if (q.phase === "freed" || q.phase === "result") if (q.cage >= 1) drawPet(q.pet.id, q.petX - cam, SQ_GY, 1.6, q.p.x > q.petX ? 1 : -1, t);
   const p = q.p;
-  drawDogAt(q.dog.x - cam, q.dog.y - 30 + Math.sin(t * 3) * 3, p.x > q.dog.x ? 1 : -1, 1.1, t);
+  if (beatriceOn()) drawDogAt(q.dog.x - cam, q.dog.y - 30 + Math.sin(t * 3) * 3, p.x > q.dog.x ? 1 : -1, 1.1, t);
+  else drawPet(activePet(), q.dog.x - cam, q.dog.y - 14 + Math.sin(t * 3) * 3, 1.1, p.x > q.dog.x ? 1 : -1, t);
   ctx.save();
   if (p.invuln > 0 && Math.floor(t * 12) % 2 === 0) ctx.globalAlpha = 0.45;
   ctx.translate(p.x - cam, p.y);
@@ -7740,7 +7745,7 @@ function drawSideQuestHUD(t) {
     drawPet(q.pet.id, cx, 300, 3, 1, t);
     txt(`POWER: ${q.pet.power}`, cx, 316, 9, "#ffd447", "center");
     wrapLines(q.pet.desc.toUpperCase(), VIEW_W - 110, 7).forEach((l, k) => txt(l, cx, 334 + k * 13, 7, "#ffffff", "center"));
-    if (q.newPet) txt(petSave.chosen === q.pet.id ? `${q.pet.name} WILL JOIN YOUR NEXT CLIMB!` : "PICK PETS IN THE PETS MENU", cx, 400, 7, "#7dff7a", "center");
+    if (q.newPet) txt(`CHOOSE ${q.pet.name} IN THE PETS MENU!`, cx, 400, 7, "#7dff7a", "center");
     else if (q.prize) txt(`YOU WON A POWER-UP: ${q.prize.name}`, cx, 400, 7, q.prize.color, "center");
     if (q.timer <= 0) {
       if (USE_BUTTONS()) uiButton("BACK TO THE CLIMB", cx - 120, 470, 240, 40, sqExit, "#7dff7a", 10);
@@ -7774,10 +7779,10 @@ let petSel = 0;                                          // 0 = Beatrice, 1 = OG
 const PET_SLOTS = 12;
 const slotPet = k => (k === 0 ? BEATRICE : k === 1 ? OG_PET : PETS[k - 2]);
 const openPets = () => { petSel = 0; state = "pets"; };
-function petsToggle() {
-  const pet = petSel > 0 ? slotPet(petSel) : null;
-  if (!pet || !petFreed(pet.id)) return;
-  petSave.chosen = petSave.chosen === pet.id ? null : pet.id;
+const isChosen = k => (k === 0 ? !petSave.chosen : petSave.chosen === slotPet(k).id);
+function petsToggle() {                                  // pick this pet for your climbs (only one at a time)
+  if (petSel > 0 && !petFreed(slotPet(petSel).id)) return;
+  petSave.chosen = petSel === 0 ? null : slotPet(petSel).id;
   savePets();
 }
 function petsKey(c) {
@@ -7792,14 +7797,14 @@ function drawPets(t) {
   const cx = VIEW_W / 2;
   panel(20, 16, VIEW_W - 40, 690);
   txt("PETS", cx, 28, 18, "#ffd447", "center");
-  txt(`${petSave.freed.length} OF ${PETS.length} FREED   ·   BEATRICE ALWAYS COMES`, cx, 52, 7, "#c8d3ff", "center");
+  txt(`${petSave.freed.length} OF ${PETS.length} FREED   ·   PICK ONE PET FOR YOUR CLIMBS`, cx, 52, 7, "#c8d3ff", "center");
   for (let k = 0; k < PET_SLOTS; k++) {
     const col = k % 4, row = Math.floor(k / 4), x = 34 + col * 104, y = 68 + row * 96;
     const pet = slotPet(k), free = k === 0 || petFreed(pet.id), sel = k === petSel;
     ctx.fillStyle = sel ? "rgba(255,212,71,0.16)" : "rgba(255,255,255,0.05)";
     rr(x, y, 96, 88, 8); ctx.fill();
     if (sel) { ctx.strokeStyle = "#ffd447"; ctx.lineWidth = 2; ctx.stroke(); }
-    if (k > 0 && petSave.chosen === pet.id) { ctx.strokeStyle = "#7dff7a"; ctx.lineWidth = 3; rr(x + 2, y + 2, 92, 84, 7); ctx.stroke(); }
+    if (isChosen(k)) { ctx.strokeStyle = "#7dff7a"; ctx.lineWidth = 3; rr(x + 2, y + 2, 92, 84, 7); ctx.stroke(); }
     if (free) {
       if (k === 0) drawDogAt(x + 48, y + 44 + Math.sin(t * 3) * 2, 1, 1.9, t);
       else drawPet(pet.id, x + 46, y + 62, 1.7, 1, t);
@@ -7822,11 +7827,9 @@ function drawPets(t) {
     txt(`POWER: ${pet.power}`, cx, y, 9, "#ffd447", "center");
     y += 18;
     for (const l of wrapLines(pet.desc, VIEW_W - 100, 7)) { txt(l, cx, y, 7, "#7dff7a", "center"); y += 13; }
-    if (petSel > 0) {
-      const on = petSave.chosen === pet.id;
-      if (USE_BUTTONS()) uiButton(on ? "COMING ON YOUR CLIMB!" : "TAKE ON MY CLIMB", cx - 120, y0 + 222, 240, 36, petsToggle, on ? "#7dff7a" : "#ffd447", 9);
-      else txt(on ? "COMING ON YOUR CLIMB!  (ENTER = LEAVE AT HOME)" : "ENTER = TAKE ON MY CLIMB", cx, y0 + 236, 8, on ? "#7dff7a" : "#ffd447", "center");
-    }
+    const on = isChosen(petSel);
+    if (USE_BUTTONS()) uiButton(on ? "COMING ON YOUR CLIMB!" : "TAKE ON MY CLIMB", cx - 120, y0 + 222, 240, 36, petsToggle, on ? "#7dff7a" : "#ffd447", 9);
+    else txt(on ? "COMING ON YOUR CLIMB!" : "ENTER = TAKE ON MY CLIMB", cx, y0 + 236, 8, on ? "#7dff7a" : "#ffd447", "center");
   } else {
     txt("???", cx, y0 + 20, 16, "rgba(255,255,255,0.5)", "center");
     txt(`TRAPPED IN SIDE QUEST ${petSel - 1}:`, cx, y0 + 70, 8, "#c8d3ff", "center");
@@ -7836,7 +7839,7 @@ function drawPets(t) {
   }
   txt("YOU CAN BRING ONE PET ON EACH CLIMB", cx, 650, 7, "#c8d3ff", "center");
   if (USE_BUTTONS()) uiButton("BACK", cx - 60, 664, 120, 30, () => { state = "title"; }, "#c8d3ff", 9);
-  else txt("ARROWS = LOOK   ENTER = TAKE / LEAVE   ESC = BACK", cx, 674, 7, "#c8d3ff", "center");
+  else txt("ARROWS = LOOK   ENTER = TAKE ON MY CLIMB   ESC = BACK", cx, 674, 7, "#c8d3ff", "center");
 }
 
 // =====================================================================
@@ -7915,6 +7918,7 @@ function drawPetHUD() {
 const pad = document.getElementById("pad"), pauseBtn = document.getElementById("pauseBtn");
 const padExtras = document.getElementById("padExtras");
 const jumpBtn = pad.querySelector('[data-hold="Space"]');
+const spellBtns = pad.querySelectorAll('[data-tap="spell"], [data-tap="KeyV"]');
 
 function bindPadButton(b) {
   const code = b.dataset.hold, tap = b.dataset.tap;
@@ -7951,6 +7955,8 @@ function updatePad() {
   pauseBtn.classList.toggle("hidden", !(IS_TOUCH && (state === "playing" || state === "explore" || state === "sidequest")));
   const goLabel = state === "explore" ? "GO" : "JUMP";             // in the 3D world the big button walks
   if (jumpBtn.textContent !== goLabel) jumpBtn.textContent = goLabel;
+  const spellsShown = state !== "playing" || beatriceOn();
+  for (const b of spellBtns) b.style.display = spellsShown ? "" : "none";
   if (!show) return;
   const extras = [[st.dive, "DIVE", "ArrowDown"], [st.dash, "DASH", "ShiftLeft"], [st.timeBubble, "SLOW", "KeyQ"],
                   [st.blink, "BLINK", "KeyE"], [st.cloud, "CLOUD", "KeyC"]].filter(x => x[0]);
