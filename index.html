@@ -95,13 +95,39 @@ const COYOTE_TIME = 0.09;             // you can still jump just after running o
 const JUMP_BUFFER = 0.12;             // pressing jump just before landing still counts
 
 // ---------- Poppies (Round 1) ----------
-const POPPY_CHANCE = 0.22;            // share of platforms that grow a poppy
+const POPPY_CHANCE = 0.12;            // share of platforms with a gift-giver (rarer since Round 11)
 const POPPY_RANGE = 260;              // poppies this close shoot petals when you jump
 const POPPY_COOLDOWN = 1.6;           // seconds for a poppy to grow its petals back
 const PETALS_PER_SHOT = 3;
 const PETAL_LIFE = 4.5;               // seconds a petal flutters before it's gone
 const BOOST_MAX = 3;                  // most super jumps you can save up
 const BOOST_JUMP = 1.35;              // super jump speed (x normal) = about 1.8x as high
+
+// ---------- Gift-givers (Round 11) ----------
+// Mommy's poppies grew into a different gift-giver for every biome. Jump near one and it
+// shoots gifts at you; each kind of gift gives its own power-up.
+const POWERS = {
+  boost: { name: "SUPER JUMP", color: "#ff8a7a" },      // saves a super jump
+  shield: { name: "SHIELD", color: "#8fe3ff" },         // blocks the next hit (up to 3)
+  feather: { name: "FEATHER FALL", color: "#e6f4ff" },  // fall slowly for a few seconds
+  speed: { name: "SPEED", color: "#7dff7a" },           // run 40% faster for a few seconds
+  rapid: { name: "RAPID FIRE", color: "#ffd447" },      // shoot twice as fast for a few seconds
+  recharge: { name: "SPELL RECHARGE", color: "#c39bff" },// every dog spell and ability is ready again
+};
+const GIVERS = {
+  water: { look: "clam", item: "pearl", itemName: "PEARLS", power: "boost", color: "245,245,255" },
+  jungle: { look: "poppy", item: "petal", itemName: "PETALS", power: "boost", color: "238,58,47" },
+  mountains: { look: "crystal", item: "shard", itemName: "CRYSTALS", power: "shield", color: "120,200,255" },
+  snowy: { look: "snowflower", item: "flake", itemName: "SNOWFLAKES", power: "feather", color: "225,240,255" },
+  sky: { look: "dandelion", item: "seed", itemName: "SEEDS", power: "speed", color: "255,255,255" },
+  darksky: { look: "orb", item: "spark", itemName: "SPARKS", power: "rapid", color: "255,230,90" },
+  space: { look: "dish", item: "star", itemName: "STARS", power: "recharge", color: "200,160,255" },
+  moon: { look: "moonrock", item: "dust", itemName: "MOON DUST", power: "boost", color: "240,236,220" },
+  mars: { look: "redcrystal", item: "shard", itemName: "RED CRYSTALS", power: "shield", color: "255,110,80" },
+  sun: { look: "sunflower", item: "spark", itemName: "SUN SPARKS", power: "rapid", color: "255,190,60" },
+  blackhole: { look: "starshard", item: "star", itemName: "STARDUST", power: "recharge", color: "200,120,255" },
+};
+const giverAt = y => GIVERS[SECTIONS[sectionAt(y / PX_PER_M)].id];
 
 // ---------- Confetti and space (Round 2, space moved up in Round 4) ----------
 const CONFETTI_AT = 100 * PX_PER_M;   // confetti party when you reach 100 m
@@ -131,15 +157,46 @@ const SHIELD_RECHARGE = 20;
 const TIME_BUBBLE = { length: 3, cooldown: 20, speed: 0.4 };
 const BLINK = { dist: 90, cooldown: 6 };
 const CLOUD = { width: 80, life: 4, cooldown: 15 };
-const ENEMY_INFO = {                  // from/to = the heights (m) where each kind lives
-  grumble: { hp: 2, r: 15, from: 40, to: 700, color: "120,115,160" },
-  buzzer: { hp: 1, r: 11, from: 200, to: 1100, color: "242,208,70" },
-  swooper: { hp: 3, r: 13, from: 450, to: 2000, color: "80,105,210" },
-  jelly: { hp: 4, r: 16, from: 950, to: 2000, color: "255,140,200" },
-  // These two fly in during their sections (Round 7), so they're never placed ahead of time.
-  asteroid: { hp: 2, r: 13, from: Infinity, to: 0, color: "150,130,110" },
-  flare: { hp: 1, r: 9, from: Infinity, to: 0, color: "255,150,60" },
-  boss: { hp: 40, r: 34, from: Infinity, to: 0, color: "255,190,70" },
+// Every enemy has a way of moving and a look:
+//   move: "patrol" drifts back and forth, "zip" zooms across the screen,
+//         "dive" hovers then dives at you, "drift" slowly floats after you
+//   art:  "cloud", "bug", "bird", "jelly", "fish", "ufo", "flame" or "eye", in its own colors
+//   color: used for the puff when it's beaten (and the builder's toolbar)
+const ENEMY_INFO = {
+  grumble: { hp: 2, r: 15, move: "patrol", art: "cloud", fill: "#6d6a8c", color: "120,115,160" },
+  buzzer: { hp: 1, r: 11, move: "zip", art: "bug", fill: "#f2d046", color: "242,208,70" },
+  swooper: { hp: 3, r: 13, move: "dive", art: "bird", fill: "#4f69d2", wing: "#2f418f", color: "80,105,210" },
+  jelly: { hp: 4, r: 16, move: "drift", art: "jelly", fill: "255,140,200", color: "255,140,200" },
+  // New in Round 11: two for every biome
+  puffer: { hp: 2, r: 13, move: "patrol", art: "fish", fill: "#f2c94c", spiky: true, color: "242,201,76" },
+  jellyfish: { hp: 2, r: 14, move: "drift", art: "jelly", fill: "170,140,255", color: "170,140,255" },
+  parrot: { hp: 2, r: 12, move: "dive", art: "bird", fill: "#3fbf4f", wing: "#e8423a", color: "63,191,79" },
+  hawk: { hp: 3, r: 13, move: "dive", art: "bird", fill: "#8b5a2b", wing: "#5a3a1a", color: "139,90,43" },
+  rockbat: { hp: 2, r: 14, move: "patrol", art: "cloud", fill: "#55525e", color: "85,82,94" },
+  snowpuff: { hp: 2, r: 15, move: "patrol", art: "cloud", fill: "#eef6ff", color: "238,246,255" },
+  icebird: { hp: 2, r: 12, move: "dive", art: "bird", fill: "#a8dcff", wing: "#5aa0d8", color: "168,220,255" },
+  sparky: { hp: 2, r: 11, move: "zip", art: "flame", fill: "#ffe680", core: "#ffffff", color: "255,230,128" },
+  thundercloud: { hp: 3, r: 16, move: "patrol", art: "cloud", fill: "#3a3d55", color: "58,61,85" },
+  ufo: { hp: 3, r: 15, move: "patrol", art: "ufo", fill: "#9aa3b8", dome: "#7dff7a", color: "154,163,184" },
+  alien: { hp: 3, r: 14, move: "drift", art: "jelly", fill: "125,255,122", color: "125,255,122" },
+  moonmoth: { hp: 2, r: 12, move: "dive", art: "bird", fill: "#e8e2cc", wing: "#b8b09a", color: "232,226,204" },
+  dustdevil: { hp: 2, r: 13, move: "zip", art: "flame", fill: "#d2784a", core: "#ffb48a", color: "210,120,74" },
+  marsufo: { hp: 3, r: 15, move: "patrol", art: "ufo", fill: "#b8604a", dome: "#ffd447", color: "184,96,74" },
+  firesprite: { hp: 3, r: 13, move: "drift", art: "flame", fill: "#ff7a2a", core: "#ffe680", color: "255,122,42" },
+  sunbird: { hp: 3, r: 13, move: "dive", art: "bird", fill: "#ffb347", wing: "#ff5a3a", color: "255,179,71" },
+  voideye: { hp: 4, r: 15, move: "drift", art: "eye", fill: "#1a0a2a", color: "195,155,255" },
+  comet: { hp: 2, r: 11, move: "zip", art: "flame", fill: "#8fd0ff", core: "#ffffff", color: "143,208,255" },
+  // These fly in during their sections (Round 7), so they're never placed ahead of time.
+  asteroid: { hp: 2, r: 13, color: "150,130,110" },
+  flare: { hp: 1, r: 9, color: "255,150,60" },
+  boss: { hp: 40, r: 34, color: "255,190,70" },
+};
+// Which enemies live in each biome
+const BIOME_ENEMIES = {
+  water: ["puffer", "jellyfish"], jungle: ["parrot", "buzzer"], mountains: ["hawk", "rockbat"],
+  snowy: ["snowpuff", "icebird"], sky: ["grumble", "buzzer"], darksky: ["sparky", "thundercloud"],
+  space: ["ufo", "alien"], moon: ["moonmoth", "alien"], mars: ["dustdevil", "marsufo"],
+  sun: ["firesprite", "sunbird"], blackhole: ["voideye", "comet"],
 };
 
 // ---------- Bosses (Round 8, more in Round 10) ----------
@@ -462,7 +519,7 @@ function buildPoppies() {
     const lo = s.kind === "ledge" ? s.x + s.w * 0.55 : s.x + 10;   // stay clear of ledge signs
     list.push({ x: lerp(lo, s.x + s.w - 10, rnd()), y: s.y, plat: s });
   }
-  for (const f of list) Object.assign(f, { off: f.x - f.plat.x, cool: 0, bounce: 0, ph: rnd() * 6.28 });
+  for (const f of list) Object.assign(f, { off: f.x - f.plat.x, cool: 0, bounce: 0, ph: rnd() * 6.28, giver: giverAt(f.y) });
   return list;
 }
 const poppies = buildPoppies();
@@ -471,12 +528,13 @@ const poppies = buildPoppies();
 function buildEnemies() {
   const rnd = mulberry32(TOWER_SEED + 3);
   const R = (a, b) => a + (b - a) * rnd();
-  const list = [];
-  for (let m = 45; m < MOON_METERS - 40; m += lerp(70, 30, m / MOON_METERS) * R(0.8, 1.2)) {
-    const kinds = Object.keys(ENEMY_INFO).filter(k => m >= ENEMY_INFO[k].from && m <= ENEMY_INFO[k].to);
-    const type = kinds[Math.floor(rnd() * kinds.length)];
+  const list = [], seen = {};
+  for (let m = 30; m < MOON_METERS - 40; m += lerp(70, 30, m / MOON_METERS) * R(0.8, 1.2)) {
+    const biome = SECTIONS[sectionAt(m)].id, kinds = BIOME_ENEMIES[biome];   // each biome has its own enemies
+    seen[biome] = (seen[biome] || 0) + 1;                        // they take turns, so you meet both
+    const type = kinds[(seen[biome] + 1) % kinds.length];
     list.push({
-      type, hx: R(40, VIEW_W - 40), hy: m * PX_PER_M + R(30, 70), maxHp: ENEMY_INFO[type].hp,
+      type, move: ENEMY_INFO[type].move, hx: R(40, VIEW_W - 40), hy: m * PX_PER_M + R(30, 70), maxHp: ENEMY_INFO[type].hp,
       r: ENEMY_INFO[type].r, ph: R(0, 6.28), amp: R(70, 150), period: R(4.5, 7),
     });
   }
@@ -510,10 +568,10 @@ function buildLevelWorld(L) {
     }
     if (p.sweep && !s.amp) s.sweeper = { period: 2.2, phase: 0, u: 0, x: p.x, dir: 1, frozen: 0 };
     t.push(s);
-    if (p.poppy != null) pops.push({ x: p.x + p.poppy, y: p.y, plat: s, off: p.poppy, cool: 0, bounce: 0, ph: p.x });
+    if (p.poppy != null) pops.push({ x: p.x + p.poppy, y: p.y, plat: s, off: p.poppy, cool: 0, bounce: 0, ph: p.x, giver: giverAt(p.y) });
   }
   const ens = L.enemies.map(e => ({
-    type: e.type, hx: e.x, hy: e.y, maxHp: ENEMY_INFO[e.type].hp, r: ENEMY_INFO[e.type].r,
+    type: e.type, move: ENEMY_INFO[e.type].move, hx: e.x, hy: e.y, maxHp: ENEMY_INFO[e.type].hp, r: ENEMY_INFO[e.type].r,
     ph: 0, amp: 100, period: 5.5,
   }));
   return { tower: t, movers: t.filter(s => s.amp), sweepers: t.filter(s => s.sweeper), poppies: pops, enemies: ens };
@@ -562,8 +620,8 @@ const UPGRADES = {
     U("moonShoes", "Moon Shoes", "Jump 30% higher in space.", s => { s.spaceJump *= 1.3; }),
     U("petalPower", "Petal Power", "Super jumps go 20% higher.", s => { s.boostPower *= 1.095; }),
     U("petalPouch", "Petal Pouch", "Save up 2 more super jumps.", s => { s.boostMax += 2; }),
-    U("petalMagnet", "Petal Magnet", "Catch petals from much farther away.", s => { s.petalReach += 30; }),
-    U("biggerBlooms", "Bigger Blooms", "Poppies shoot 2 more petals at you.", s => { s.extraPetals += 2; }),
+    U("petalMagnet", "Petal Magnet", "Catch gifts from much farther away.", s => { s.petalReach += 30; }),
+    U("biggerBlooms", "Bigger Blooms", "Gift-givers shoot 2 more gifts at you.", s => { s.extraPetals += 2; }),
     U("dive", "Dive", "Press DOWN in mid-air to drop straight down fast.", s => { s.dive = true; }),
     U("wallKick", "Wall Kick", "Jump off the sides of the screen.", s => { s.wallKick = true; }),
     U("hoverJets", "Hover Jets", "Hold jump while falling to hover (1 second per jump).", s => { s.hover = 1; }),
@@ -595,7 +653,7 @@ const UPGRADES = {
     U("splashBomb", "Splash Bomb", "Hits explode and hurt other enemies nearby.", s => { s.splash = 60; }),
     U("sweeperStopper", "Sweeper Stopper", "Your blaster can freeze sweepers for 4 seconds.", s => { s.stopSweepers = 4; }),
     U("bouncyShots", "Bouncy Shots", "Shots bounce off the sides of the screen.", s => { s.bounceShots += 2; }),
-    U("petalBlaster", "Petal Blaster", "Every petal you catch fires a free shot.", s => { s.petalBurst = true; }),
+    U("petalBlaster", "Petal Blaster", "Every gift you catch fires a free shot.", s => { s.petalBurst = true; }),
     U("helperDrone", "Helper Drone", "A little drone flies with you and shoots too.", s => { s.drone = true; }),
     U("sniperScope", "Sniper Scope", "Your blaster locks on to enemies 50% farther away.", s => { s.aimRange *= 1.5; s.shotRange *= 1.25; }),
     U("boomerang", "Boomerang Blaster", "Shots fly back to you and can hit again.", s => { s.boomerang = true; }),
@@ -747,6 +805,7 @@ function resetWorld() {
     reboundsUsed: 0, flagUsed: false, rerollsUsed: 0,
     timeCd: 0, blinkCd: 0, cloudCd: 0, fireCd: 0, shotCount: 0, spellTime: 0,
     spells: [0], spellSel: 0, spellCds: {}, domeTime: 0,
+    fxShield: 0, fxFeather: 0, fxSpeed: 0, fxRapid: 0, powerTextCd: 0,
   });
   sectionReached = 0;
   sectionFlash = 0;
@@ -1372,6 +1431,7 @@ function poppiesShoot() {
       petals.push({
         x: hx, y: hy, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
         age: 0, rot: Math.random() * 6.28, spin: (Math.random() * 2 - 1) * 6, ph: Math.random() * 6.28,
+        item: f.giver.item, power: f.giver.power, color: f.giver.color,
       });
     }
   }
@@ -1397,8 +1457,8 @@ function updatePoppies(dt) {
     const caught = q.x > player.x - reach && q.x < player.x + PLAYER_W + reach &&
                    q.y > player.y - reach && q.y < player.y + PLAYER_H + reach;
     if (caught) {
-      if (boosts < st.boostMax) boosts++;
-      puff(q.x, q.y, 5, 60, "255,90,80");
+      grantPower(q.power || "boost");
+      puff(q.x, q.y, 5, 60, q.color || "255,90,80");
       petals.splice(i, 1);
       if (st.petalBurst) {                             // Petal Blaster: a free shot
         const x = player.x + PLAYER_W / 2, y = player.y + PLAYER_H * 0.55;
@@ -1409,6 +1469,24 @@ function updatePoppies(dt) {
       petals.splice(i, 1);
     }
   }
+}
+
+// Each gift you catch gives its power-up. Timed ones add 3 seconds (up to 10).
+function grantPower(power) {
+  const p = player, cx = p.x + PLAYER_W / 2;
+  const addTime = k => { p[k] = Math.min(10, (p[k] || 0) + 3); };
+  if (power === "boost") { if (boosts < st.boostMax) boosts++; return; }
+  if (power === "shield") p.fxShield = Math.min(3, (p.fxShield || 0) + 1);
+  else if (power === "feather") addTime("fxFeather");
+  else if (power === "speed") addTime("fxSpeed");
+  else if (power === "rapid") addTime("fxRapid");
+  else if (power === "recharge") {
+    for (const k in p.spellCds) p.spellCds[k] = 0;
+    p.timeCd = p.blinkCd = p.cloudCd = 0;
+  }
+  if (p.powerTextCd > 0) return;                     // one label per handful of gifts
+  p.powerTextCd = 0.6;
+  floatText(cx, p.y + PLAYER_H + 30, POWERS[power].name + "!", POWERS[power].color);
 }
 
 // Moving platforms slide back and forth; sweepers zoom along their platforms.
@@ -1621,6 +1699,13 @@ function hitPlayer(dirX, kx, ky, enemy = null) {
     floatText(cx, p.y + PLAYER_H + 20, "BLOCKED!", "#8fe3ff");
     return false;
   }
+  if (p.fxShield > 0) {                                             // SHIELD gift (crystals)
+    p.fxShield--;
+    p.invuln = 0.6;
+    ring(cx, cy, 36, "120,200,255");
+    floatText(cx, p.y + PLAYER_H + 20, "BLOCKED!", "#8fe3ff");
+    return false;
+  }
   p.vx = dirX * kx * st.knockResist;
   p.vy = ky * st.knockResist;
   Object.assign(p, { onGround: false, standOn: null, coyote: 0, jumping: false, diving: false, dashTime: 0 });
@@ -1714,7 +1799,7 @@ function updatePlayer(dt) {
   const held = keys.Space || keys.ArrowUp || keys.KeyW;
   const dir = p.stun > 0 ? 0 : (right ? 1 : 0) - (left ? 1 : 0);   // no steering while knocked
   const inSpace = p.y >= SPACE_Y;
-  const maxRun = MAX_RUN * st.runSpeed * (p.onGround ? 1 : st.airSpeed);
+  const maxRun = MAX_RUN * st.runSpeed * (p.onGround ? 1 : st.airSpeed) * (p.fxSpeed > 0 ? 1.4 : 1);   // SPEED gift
 
   // Running
   if (p.dashTime > 0) {
@@ -1751,7 +1836,7 @@ function updatePlayer(dt) {
   if (p.dashTime > 0) {
     p.vy = 0;
   } else {
-    const maxFall = p.diving ? MAX_FALL * 1.6 : MAX_FALL * fallAt(p.y) * st.fallSpeed;
+    const maxFall = p.diving ? MAX_FALL * 1.6 : MAX_FALL * fallAt(p.y) * st.fallSpeed * (p.fxFeather > 0 ? 0.4 : 1);   // FEATHER FALL gift
     p.vy = Math.max(p.vy - gravityAt(p.y) * st.gravity * dt, -maxFall);
     if (st.hover && held && p.vy < 0 && p.hoverLeft > 0 && !p.diving) {   // Hover Jets
       p.vy = Math.max(p.vy, -35);
@@ -2003,7 +2088,7 @@ function updateBlaster(dt) {
   p.fireCd -= dt;
   if ((keys.KeyF || keys.KeyJ) && p.fireCd <= 0) {
     fireBlaster();
-    p.fireCd = st.fireDelay;
+    p.fireCd = st.fireDelay * (p.fxRapid > 0 ? 0.5 : 1);    // RAPID FIRE gift
   }
 
   if (st.drone) {                                    // Helper Drone
@@ -2116,11 +2201,11 @@ function moveEnemy(e, edt, px, py) {
     e.x += e.vx * edt;
     e.y += e.vy * edt;
     if (e.x < -60 || e.x > VIEW_W + 60 || e.y < camY - 150 || e.y > camY + VIEW_H + 100) e.alive = false;   // gone off screen
-  } else if (e.type === "grumble") {   // grumpy cloud: drifts back and forth
+  } else if (e.move === "patrol") {    // drifts back and forth
     ease(e.hx + e.amp * Math.sin(e.t * 2 * Math.PI / e.period + e.ph), e.hy + 8 * Math.sin(e.t * 1.7 + e.ph), 3);
-  } else if (e.type === "buzzer") {    // zips all the way across the screen
+  } else if (e.move === "zip") {       // zips all the way across the screen
     ease(VIEW_W / 2 + (VIEW_W / 2 - 30) * Math.sin(e.t * 0.9 + e.ph), e.hy + 22 * Math.sin(e.t * 3.2 + e.ph), 6);
-  } else if (e.type === "swooper") {   // hovers, then dives at you
+  } else if (e.move === "dive") {      // hovers, then dives at you
     if (e.mode === "hover") {
       ease(e.hx + 30 * Math.sin(e.t * 1.3 + e.ph), e.hy + 10 * Math.sin(e.t * 2 + e.ph), 3);
       e.cd -= edt;
@@ -2137,7 +2222,7 @@ function moveEnemy(e, edt, px, py) {
       ease(e.hx, e.hy, 2);
       if (Math.hypot(e.hx - e.x, e.hy - e.y) < 12) e.mode = "hover";
     }
-  } else {                             // space jelly: slowly floats after you
+  } else {                             // "drift": slowly floats after you
     const near = Math.hypot(px - e.hx, py - e.hy) < 320;
     const tx = near ? px : e.hx, ty = near ? py : e.hy;
     const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy) || 1;
@@ -2279,7 +2364,8 @@ function update(dt) {
     const p = player;
     runTime += dt;
     if (timeSlow > 0) timeSlow -= dt;
-    for (const k of ["timeCd", "blinkCd", "cloudCd", "invuln", "starTime", "spellTime", "domeTime"]) if (p[k] > 0) p[k] -= dt;
+    for (const k of ["timeCd", "blinkCd", "cloudCd", "invuln", "starTime", "spellTime", "domeTime",
+                     "fxFeather", "fxSpeed", "fxRapid", "powerTextCd"]) if (p[k] > 0) p[k] -= dt;
     for (const k in p.spellCds) if (p.spellCds[k] > 0) p.spellCds[k] -= dt;
     if (st.shield && !p.shieldReady) { p.shieldTimer -= dt; if (p.shieldTimer <= 0) p.shieldReady = true; }
     updateMovers(dt);
@@ -2941,9 +3027,12 @@ function drawParticles() {
   }
 }
 
+// Gift-givers: Mommy's poppy in the jungle, and something different in every other biome.
 function drawPoppy(f, t) {
   const sy = toScreenY(f.y);
   if (sy < -40 || sy > VIEW_H + 30) return;
+  const look = f.giver ? f.giver.look : "poppy";
+  if (look !== "poppy") { drawGiver(f, look, sy, t); return; }
   const hx = f.x + Math.sin(t * 1.6 + f.ph) * 2, hy = sy - 20;
   ctx.strokeStyle = "#3f8f3a";
   ctx.lineWidth = 2;
@@ -2971,6 +3060,119 @@ function drawPoppy(f, t) {
   ctx.fill();
 }
 
+function drawGiver(f, look, sy, t) {
+  const x = f.x, grow = 1 - 0.5 * clamp(f.cool / POPPY_COOLDOWN, 0, 1), pop = 1 + f.bounce * 0.3;
+  const dot = (cx, cy, r, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); };
+  const stem = h => {
+    ctx.strokeStyle = "#3f8f3a"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, sy); ctx.lineTo(x + Math.sin(t * 1.6 + f.ph) * 2, sy - h); ctx.stroke();
+  };
+  const crystal = (c1, c2) => {
+    for (const [dx, h, w] of [[-5, 14, 5], [0, 22, 6], [6, 16, 5]]) {
+      ctx.fillStyle = dx === 0 ? c1 : c2;
+      ctx.beginPath(); ctx.moveTo(x + dx - w, sy); ctx.lineTo(x + dx, sy - h * grow * pop); ctx.lineTo(x + dx + w, sy); ctx.fill();
+    }
+  };
+  switch (look) {
+    case "clam": {                                    // a clam that opens to show its pearl
+      const open = 4 + 4 * grow * pop;
+      ctx.fillStyle = "#e8a8c0";
+      ctx.beginPath(); ctx.ellipse(x, sy - 4, 11, 5, 0, 0, Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x, sy - 4 - open, 11, 5, 0, Math.PI, 0); ctx.fill();
+      if (grow > 0.8) dot(x, sy - 6, 3, "#ffffff");
+      break;
+    }
+    case "crystal": crystal("#9fe0ff", "#5aa8e0"); break;
+    case "redcrystal": crystal("#ff9a7a", "#d0503a"); break;
+    case "snowflower":
+      stem(18);
+      for (let i = 0; i < 6; i++) {
+        const a = i * Math.PI / 3 + t;
+        dot(x + Math.cos(a) * 5 * grow * pop, sy - 20 + Math.sin(a) * 5 * grow * pop, 3.5 * grow, "#f4fbff");
+      }
+      dot(x, sy - 20, 2.5, "#7ac8ff");
+      break;
+    case "dandelion":
+      stem(20);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.beginPath(); ctx.arc(x, sy - 22, 8 * grow * pop, 0, Math.PI * 2); ctx.fill();
+      dot(x, sy - 22, 2, "#d8d0a0");
+      break;
+    case "orb":                                       // a crackling storm orb on a pedestal
+      ctx.fillStyle = "#4a4458"; ctx.fillRect(x - 4, sy - 10, 8, 10);
+      dot(x, sy - 16, 7 * grow * pop, `rgba(255,230,90,${0.6 + 0.3 * Math.sin(t * 12)})`);
+      dot(x, sy - 16, 3, "#ffffff");
+      break;
+    case "dish":                                      // a little satellite dish
+      ctx.fillStyle = "#9aa3b8"; ctx.fillRect(x - 2, sy - 10, 4, 10);
+      ctx.save(); ctx.translate(x, sy - 14); ctx.rotate(-0.5 + Math.sin(t) * 0.2);
+      ctx.beginPath(); ctx.ellipse(0, 0, 10 * pop, 5, 0, 0, Math.PI); ctx.fill();
+      ctx.restore();
+      dot(x + 3, sy - 18, 2.5 * grow, "#c8a0ff");
+      break;
+    case "moonrock":
+      dot(x, sy - 6, 8, "#cfc8b0");
+      dot(x - 2, sy - 8, 2, "#a8a090");
+      dot(x, sy - 12, 4 * grow * pop, `rgba(255,250,220,${0.4 + 0.3 * Math.sin(t * 4)})`);
+      break;
+    case "sunflower":
+      stem(20);
+      ctx.fillStyle = "#ffd447";
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4;
+        ctx.beginPath(); ctx.ellipse(x + Math.cos(a) * 7 * grow * pop, sy - 22 + Math.sin(a) * 7 * grow * pop, 4, 2.2, a, 0, Math.PI * 2); ctx.fill();
+      }
+      dot(x, sy - 22, 4, "#7a4a1a");
+      break;
+    case "starshard":
+      ctx.strokeStyle = "#7a5aa8"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, sy); ctx.lineTo(x, sy - 14); ctx.stroke();
+      drawStar(x, sy - 20, 8 * grow * pop, "#c39bff", t);
+      break;
+  }
+}
+
+// One gift flying through the air, drawn as whatever its giver shoots.
+function drawGift(q, alpha) {
+  const sx = q.x, sy = toScreenY(q.y), c = q.color || "238,58,47";
+  if (!q.item || q.item === "petal") { drawPetal(sx, sy, q.rot, 1.3, alpha); return; }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(sx, sy);
+  ctx.rotate(q.rot);
+  ctx.fillStyle = `rgb(${c})`;
+  ctx.strokeStyle = `rgb(${c})`;
+  switch (q.item) {
+    case "pearl": case "dust":
+      ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(-2, -3, 2, 2);
+      break;
+    case "shard":
+      ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(4, 0); ctx.lineTo(0, 7); ctx.lineTo(-4, 0); ctx.fill();
+      break;
+    case "flake":
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 3; i++) { ctx.rotate(Math.PI / 3); ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(6, 0); ctx.stroke(); }
+      break;
+    case "seed":
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 7); ctx.stroke();
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.beginPath(); ctx.arc(0, -2, 5, 0, Math.PI * 2); ctx.fill();
+      break;
+    case "spark":
+      ctx.beginPath(); ctx.moveTo(-2, -7); ctx.lineTo(3, -1); ctx.lineTo(0, 0); ctx.lineTo(2, 7); ctx.lineTo(-3, 1); ctx.lineTo(0, 0); ctx.fill();
+      break;
+    case "star":
+      ctx.restore();
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      drawStar(sx, sy, 7, `rgb(${c})`, q.rot);
+      break;
+  }
+  ctx.restore();
+}
+
 function drawPetal(x, y, rot, size, alpha = 1) {
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -2989,7 +3191,7 @@ function drawPetal(x, y, rot, size, alpha = 1) {
 
 function drawPetals() {
   for (const q of petals) {
-    drawPetal(q.x, toScreenY(q.y), q.rot, 1.3, Math.min(1, (PETAL_LIFE - q.age) / 0.8));
+    drawGift(q, Math.min(1, (PETAL_LIFE - q.age) / 0.8));
   }
 }
 
@@ -3129,15 +3331,15 @@ function drawEnemy(e, t) {
     ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#ffffff";
     ctx.beginPath(); ctx.arc(-2, -2, r * 0.45, 0, Math.PI * 2); ctx.fill();
-  } else if (e.type === "grumble") {
-    ctx.fillStyle = "#6d6a8c";
+  } else if (ENEMY_INFO[e.type].art === "cloud") {   // grumpy clouds, rock bats, snow puffs
+    ctx.fillStyle = ENEMY_INFO[e.type].fill;
     for (const [cx, cy, cr] of [[-r * 0.55, 3, r * 0.6], [r * 0.55, 3, r * 0.6], [0, -r * 0.25, r * 0.75], [0, 4, r * 0.7]]) {
       ctx.beginPath();
       ctx.arc(cx, cy, cr, 0, Math.PI * 2);
       ctx.fill();
     }
     eyes(-1, 5, 3.4, true);
-  } else if (e.type === "buzzer") {
+  } else if (ENEMY_INFO[e.type].art === "bug") {     // buzz bugs
     const flap = Math.abs(Math.sin(t * 40 + e.ph));
     ctx.fillStyle = "rgba(220,240,255,0.75)";
     for (const s of [-1, 1]) {
@@ -3145,7 +3347,7 @@ function drawEnemy(e, t) {
       ctx.ellipse(s * 4, -r * 0.9, 4, 7 * flap + 2, s * 0.4, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = "#f2d046";
+    ctx.fillStyle = ENEMY_INFO[e.type].fill;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
@@ -3156,9 +3358,63 @@ function drawEnemy(e, t) {
     ctx.fillRect(r * 0.25, -r, 4, r * 2);
     ctx.restore();
     eyes(-2, 4, 2.8, false);
-  } else if (e.type === "swooper") {
+  } else if (ENEMY_INFO[e.type].art === "fish") {    // puffer fish (puffs up when you're close)
+    const info = ENEMY_INFO[e.type];
+    const puffed = Math.hypot(player.x + PLAYER_W / 2 - e.x, player.y + PLAYER_H / 2 - e.y) < 120;
+    const rr2 = r * (puffed ? 1.15 : 0.9), face = Math.cos(e.t * 2 * Math.PI / (e.period || 5) + e.ph) >= 0 ? 1 : -1;
+    ctx.fillStyle = info.fill;
+    ctx.beginPath(); ctx.moveTo(-face * rr2, 0); ctx.lineTo(-face * (rr2 + 9), -7); ctx.lineTo(-face * (rr2 + 9), 7); ctx.fill();
+    if (info.spiky && puffed) {
+      ctx.strokeStyle = "#b8862a";
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 10; i++) {
+        const a = i * Math.PI / 5;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * rr2, Math.sin(a) * rr2); ctx.lineTo(Math.cos(a) * (rr2 + 5), Math.sin(a) * (rr2 + 5)); ctx.stroke();
+      }
+    }
+    ctx.fillStyle = info.fill;
+    ctx.beginPath(); ctx.arc(0, 0, rr2, 0, Math.PI * 2); ctx.fill();
+    eyes(-3, 5, 3, puffed);
+  } else if (ENEMY_INFO[e.type].art === "ufo") {     // flying saucers
+    const info = ENEMY_INFO[e.type];
+    ctx.fillStyle = info.dome;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath(); ctx.arc(0, -3, r * 0.55, Math.PI, 0); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = info.fill;
+    ctx.beginPath(); ctx.ellipse(0, 0, r * 1.2, r * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+    for (let i = -2; i <= 2; i++) {                  // blinking lights
+      ctx.fillStyle = Math.floor(t * 6 + i) % 2 ? "#ffd447" : "#ff5a5a";
+      ctx.beginPath(); ctx.arc(i * r * 0.4, 2, 2, 0, Math.PI * 2); ctx.fill();
+    }
+    eyes(-6, 4, 2.4, true);
+  } else if (ENEMY_INFO[e.type].art === "flame") {   // sparks, dust devils, fire sprites, comets
+    const info = ENEMY_INFO[e.type];
+    ctx.fillStyle = info.fill;
+    ctx.beginPath();
+    for (let i = 0; i <= 10; i++) {
+      const a = Math.PI + i * Math.PI / 10, flick = 1 + Math.sin(t * 18 + i * 2.1) * 0.25;
+      ctx.lineTo(Math.cos(a) * r * (i % 2 ? 1.5 * flick : 0.9), Math.sin(a) * r * (i % 2 ? 1.5 * flick : 0.9));
+    }
+    ctx.arc(0, 0, r * 0.9, 0, Math.PI);
+    ctx.fill();
+    ctx.fillStyle = info.core;
+    ctx.beginPath(); ctx.arc(0, 2, r * 0.5, 0, Math.PI * 2); ctx.fill();
+    eyes(-1, 4, 2.6, true);
+  } else if (ENEMY_INFO[e.type].art === "eye") {     // void eyes at the black hole
+    ctx.fillStyle = "rgba(195,155,255,0.35)";
+    ctx.beginPath(); ctx.arc(0, 0, r + 5 + Math.sin(t * 5) * 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = ENEMY_INFO[e.type].fill;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.ellipse(0, 0, r * 0.75, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#a565f0";
+    ctx.beginPath(); ctx.arc(ex * 2, ey * 2, r * 0.35, 0, Math.PI * 2); ctx.fill();   // it watches you
+    ctx.fillStyle = "#05010a";
+    ctx.beginPath(); ctx.arc(ex * 2, ey * 2, r * 0.16, 0, Math.PI * 2); ctx.fill();
+  } else if (ENEMY_INFO[e.type].art === "bird") {    // swoopers, parrots, hawks, ice birds...
     const flap = Math.sin(t * (e.mode === "dive" ? 30 : 12) + e.ph) * 7;
-    ctx.fillStyle = "#2f418f";
+    ctx.fillStyle = ENEMY_INFO[e.type].wing;
     for (const s of [-1, 1]) {
       ctx.beginPath();
       ctx.moveTo(s * 5, 0);
@@ -3167,7 +3423,7 @@ function drawEnemy(e, t) {
       ctx.closePath();
       ctx.fill();
     }
-    ctx.fillStyle = "#4f69d2";
+    ctx.fillStyle = ENEMY_INFO[e.type].fill;
     ctx.beginPath();
     ctx.ellipse(0, 0, r * 0.8, r, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -3179,8 +3435,9 @@ function drawEnemy(e, t) {
     ctx.closePath();
     ctx.fill();
     eyes(-3, 4, 3, true);
-  } else {
-    ctx.strokeStyle = "rgba(255,170,215,0.8)";
+  } else {                                           // jellies (space jelly, jellyfish, aliens)
+    const c = ENEMY_INFO[e.type].fill;
+    ctx.strokeStyle = `rgba(${c},0.8)`;
     ctx.lineWidth = 2;
     for (let i = -2; i <= 2; i++) {
       ctx.beginPath();
@@ -3189,8 +3446,8 @@ function drawEnemy(e, t) {
       ctx.stroke();
     }
     const g = ctx.createRadialGradient(0, -4, 2, 0, -2, r);
-    g.addColorStop(0, "rgba(255,220,240,0.95)");
-    g.addColorStop(1, "rgba(255,120,190,0.75)");
+    g.addColorStop(0, "rgba(255,240,250,0.95)");
+    g.addColorStop(1, `rgba(${c},0.8)`);
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(0, 2, r, Math.PI, 0);
@@ -3585,6 +3842,17 @@ function drawHUD() {
   let y = 90;
   const sec = SECTIONS[sectionAt(Math.max(0, p.y) / PX_PER_M)];
   txt(sec.name, 12, y, 8, sec.color);
+  const fx = [];                                     // power-ups from gifts that are working right now
+  if (p.fxShield > 0) fx.push([`SHIELD x${p.fxShield}`, POWERS.shield.color]);
+  if (p.fxSpeed > 0) fx.push([`SPEED ${Math.ceil(p.fxSpeed)}`, POWERS.speed.color]);
+  if (p.fxFeather > 0) fx.push([`FEATHER ${Math.ceil(p.fxFeather)}`, POWERS.feather.color]);
+  if (p.fxRapid > 0) fx.push([`RAPID ${Math.ceil(p.fxRapid)}`, POWERS.rapid.color]);
+  let fxX = 12;
+  for (const [label, color] of fx) {
+    txt(label, fxX, y + 14, 7, color);
+    fxX += label.length * 7 + 10;
+  }
+  if (fx.length) y += 14;
   y += 16;
   if (p.y >= SPACE_Y) { txt("LOW GRAVITY", 12, y, 8, "#8fe3ff"); y += 16; }
   if (timeSlow > 0) txt("SLOW-MO", 12, y, 8, "#8fe3ff");
@@ -3654,7 +3922,7 @@ function drawHUD() {
     txt("WALK INTO THE BOSS GATE!", VIEW_W / 2, 250, 10, "#ffd447", "center");
   }
   if (pendingPicks > 0 && Math.floor(performance.now() / 400) % 2 === 0) {   // an upgrade is waiting
-    txt("UPGRADE READY! LAND ON A SOLID PLATFORM", VIEW_W / 2, 236, 8, "#ffd447", "center");
+    txt("UPGRADE READY! LAND ON A SOLID PLATFORM", VIEW_W / 2, 256, 8, "#ffd447", "center");
   }
   if (sectionFlash > 0) {                            // a new section!
     const s = SECTIONS[sectionReached];
@@ -3662,6 +3930,8 @@ function drawHUD() {
     txt(s.name, VIEW_W / 2, 172, 18, s.color, "center");
     txt(s.tip, VIEW_W / 2, 200, 8, "#ffffff", "center");
     if (newSpell) txt(`NEW DOG SPELL: ${newSpell}!`, VIEW_W / 2, 218, 8, "#e0a8ff", "center");
+    const g = GIVERS[s.id];                          // what this biome's gifts do
+    txt(`CATCH ${g.itemName}: ${POWERS[g.power].name}!`, VIEW_W / 2, 234, 8, POWERS[g.power].color, "center");
     ctx.globalAlpha = 1;
   }
 }
@@ -3691,10 +3961,10 @@ function drawTitle(t) {
   if (IOS_BROWSER) txt("FULL SCREEN: SHARE > ADD TO HOME SCREEN", cx, 8, 7, "#ffd447", "center");
   const rows = IS_TOUCH
     ? [["< >", "MOVE"], ["JUMP", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"], ["SHOOT", "SHOOT"], ["SPELL", "DOG SPELL"],
-       ["NEXT", "SWITCH DOG SPELL"], ["CATCH PETALS", "SUPER JUMP"], ["II", "PAUSE"]]
+       ["NEXT", "SWITCH DOG SPELL"], ["CATCH GIFTS", "POWER-UPS"], ["II", "PAUSE"]]
     : [["ARROWS or A/D", "MOVE"], ["SPACE, UP or W", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"],
        ["F or J", "SHOOT"], ["CTRL + B", "DOG SPELL"], ["V", "SWITCH DOG SPELL"],
-       ["CATCH PETALS", "SUPER JUMP"], ["P or ESC", "PAUSE"]];
+       ["CATCH GIFTS", "POWER-UPS"], ["P or ESC", "PAUSE"]];
   rows.forEach(([k, v], i) => {
     txt(k, 62, 122 + i * 14, 8, "#ffffff");
     txt(v, VIEW_W - 62, 122 + i * 14, 8, "#9fe39a", "right");
