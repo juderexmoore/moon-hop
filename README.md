@@ -20,6 +20,12 @@ Works on computers, iPads and iPhones (on-screen buttons appear on touch screens
 | P or Esc | Pause |
 | S (title screen) | Sandbox: build your own levels and characters |
 
+**Mouse:** the climber runs toward the mouse. Left click jumps (hold to jump higher), right click shoots,
+middle click casts the dog's spell, and the wheel switches spells. Menus have buttons you can click.
+
+**Portals:** now and then a portal appears on a platform. Jump in for one of 10 mini-games. Win one and you
+keep a power-up until you fall, and they stack.
+
 High scores, levels and characters save in your own browser.
 
 ## Playing at home with saved files
