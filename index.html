@@ -76,6 +76,7 @@ const CREDITS = [
   { round: 10, who: "Daddy", what: "11 biomes from under the sea to the Black Hole final boss, the Boulder Bully mini boss, safer upgrade picks and full-screen phones." },
   { round: 11, who: "Daddy", what: "Two new enemies for every biome, and a different gift-giver in each biome with its own power-up." },
   { round: 12, who: "Daddy", what: "3D view: platforms become solid blocks with depth, shadows and haze. Press 3 or tap 3D to switch." },
+  { round: 13, who: "Daddy", what: "3D by default, checkpoint flags on every rest ledge, starting in any biome you've reached, and real horizons for every land biome." },
 ];
 
 // ---------- Tuning ----------
@@ -721,11 +722,16 @@ const PLAT_BODY = SECTIONS.flatMap(s => [[s.from + 2, s.body], [s.to - 2, s.body
 // Scrolling backgrounds: each section has its own faraway things that slide by
 // slower than the platforms (BACK_P) and drift sideways.
 const BACK_P = 0.35;
+// Only things that really float are scattered here (fish, storm clouds, satellites...).
+// Land - sea floor, jungle, mountains, Moon and Mars - is drawn as a horizon (see drawLandscapes).
 const BACKDROP_KINDS = {
-  water: [["kelp", 9], ["fish", 10]], jungle: [["palm", 9]], mountains: [["peak", 8]], snowy: [["snowpeak", 8]],
-  sky: [["castle", 6], ["island", 4]], darksky: [["thunderhead", 8], ["ribbon", 4]], space: [["satellite", 8], ["earth", 1]],
-  moon: [["moonbig", 1], ["earth", 1]], mars: [["mars", 1], ["mesa", 7]], sun: [["sun", 1]], blackhole: [["rock", 16]],
+  water: [["fish", 12]], jungle: [], mountains: [], snowy: [],
+  sky: [], darksky: [["thunderhead", 8], ["ribbon", 4]], space: [["satellite", 8]],
+  moon: [["earth", 1]], mars: [], sun: [["sun", 1]], blackhole: [["rock", 16]],
 };
+// Bumpy outlines for the horizons: a far ridge and a near ridge for each land biome.
+const ridge = n => Array.from({ length: n }, (_, k) => 0.35 + 0.65 * Math.abs(Math.sin(k * 1.7 + deco() * 2)) * deco());
+const RIDGES = Object.fromEntries(SECTIONS.map(s => [s.id, { far: ridge(14), near: ridge(18) }]));
 const BIG_ONES = ["sun", "earth", "moonbig", "mars"];        // one big thing in the middle of the biome
 const backdrop = [];
 SECTIONS.forEach((sec, i) => {
@@ -780,6 +786,9 @@ const boss = { phase: "none", def: null, e: null, timer: 0, ledge: null, gate: n
 const bossActive = () => boss.phase === "intro" || boss.phase === "fight";
 const barrierUp = () => boss.phase === "waiting" || bossActive();
 let creditsT = 0;               // how far the credits have scrolled
+let checkpoint = null;          // the last rest ledge you reached this climb (Round 13)
+let bestBiome = (() => { try { return Number(localStorage.getItem("moonhop.bestBiome")) || 0; } catch (e) { return 0; } })();
+let startBiome = 0;             // which biome the next climb starts in (title screen: B)
 const solidNow = s => !(s.gone > 0) && !(s.blink && (runTime + s.blinkPh) % BLINK_CYCLE > BLINK_ON);
 let moonletAngle = 0;
 let timeSlow = 0;
@@ -819,6 +828,7 @@ function resetWorld() {
   flareT = 1.5;
   rockT = 1;
   Object.assign(boss, { phase: "none", def: null, e: null, timer: 0, ledge: null, gate: null, beaten: [], prize: false });
+  checkpoint = null;
   for (const s of tower) if (s.crumble) { s.crumbleT = 0; s.gone = 0; }
   camY = CAM_MIN;
   runTime = 0;
@@ -865,7 +875,56 @@ function startRun() {
   mode = "main";
   setWorld(MAIN_WORLD);
   resetWorld();
+  if (startBiome > 0) placeAtBiome(Math.min(startBiome, bestBiome));
   state = "playing";
+}
+
+// ---------- Checkpoints and starting biomes (Round 13) ----------
+// Every rest ledge (each 100 m) has a checkpoint flag. Fall, and you can go back to the
+// last one you reached: your upgrades, spells and time carry on.
+function respawnAtCheckpoint() {
+  const L = checkpoint, p = player;
+  Object.assign(p, { x: L.x + L.w / 2 - PLAYER_W / 2, y: L.y, vx: 0, vy: 0, onGround: true, standOn: L, landY: L.y,
+                     stun: 0, diving: false, dashTime: 0, jumping: false, invuln: 2 });
+  camY = Math.max(CAM_MIN, L.y - VIEW_H * 0.42);
+  for (const e of enemies) if (e.dyn) e.alive = false;
+  if (boss.phase !== "none" && boss.phase !== "won") {      // a boss fight starts over from its gate
+    if (boss.e) boss.e.alive = false;
+    Object.assign(boss, { phase: "none", e: null });
+  }
+  petals.length = 0;
+  shots.length = 0;
+  Object.assign(storm, { warn: 0, strike: 0 });
+  wind.phase = "calm";
+  floatText(p.x + PLAYER_W / 2, L.y + 60, "BACK AT THE CHECKPOINT!", "#7dff7a");
+  state = "playing";
+}
+
+// Start the climb in a biome you've already reached. You get the upgrade picks and
+// dog spells you'd have earned on the way up, and bosses below you count as beaten.
+function placeAtBiome(i) {
+  const ledge = tower.find(s => s.kind === "ledge" && s.mark >= SECTIONS[i].from);
+  if (!ledge) return;
+  const p = player;
+  Object.assign(p, { x: ledge.x + ledge.w / 2 - PLAYER_W / 2, y: ledge.y, landY: ledge.y, onGround: true, standOn: ledge, lastLedge: ledge });
+  camY = ledge.y - VIEW_H * 0.42;
+  maxHeightPx = ledge.y;
+  milestonesDone = Math.floor(ledge.mark / UPGRADE_EVERY_M);
+  pendingPicks = milestonesDone;
+  confettiDone = true;
+  sectionReached = i;
+  sectionFlash = 3.5;
+  newSpell = "";
+  for (let k = 1; k <= i; k++) if (SPELLS[k] && !p.spells.includes(k)) p.spells.push(k);
+  p.spellSel = p.spells.length - 1;
+  checkpoint = ledge;
+  boss.beaten = BOSSES.filter(b => b.at < ledge.mark).map(b => b.at);
+}
+
+function saveBestBiome(i) {
+  if (i <= bestBiome) return;
+  bestBiome = i;
+  try { localStorage.setItem("moonhop.bestBiome", String(i)); } catch (e) { /* just for this visit */ }
 }
 
 function showTitle() {
@@ -1032,7 +1091,15 @@ function qualifies(r) {
   return r.height > 0 && (scores.length < MAX_SCORES || compareScores(r, scores[MAX_SCORES - 1]) < 0);
 }
 
-function endRun(moon) {
+function endRun(moon, forReal = false) {
+  // Fell, but you've reached a checkpoint? You can go back to it instead of ending the climb.
+  if (!moon && !forReal && mode === "main" && checkpoint) {
+    result = { moon: false, height: Math.floor(maxHeightPx / PX_PER_M), time: Math.round(runTime * 10) / 10 };
+    state = "over";
+    overPhase = "checkpoint";
+    overTimer = 0.5;
+    return;
+  }
   if (moon) maxHeightPx = MOON_Y;
   result = {
     moon,
@@ -1094,6 +1161,7 @@ function onKeyPress(e) {
     else if (c === "KeyC") openCredits();
     else if (c === "KeyS") openSandbox();
     else if (c === "Digit3") toggle3D();
+    else if (c === "KeyB" && bestBiome > 0) startBiome = (startBiome + 1) % (bestBiome + 1);   // choose a start biome
   } else if (state === "sandbox") {
     handleSandboxKey(e);
   } else if (state === "editor") {
@@ -1130,6 +1198,11 @@ function shiftLetter(ch, step) {
 function handleOverKey(e) {
   if (overTimer > 0) return;
   const c = e.code;
+  if (overPhase === "checkpoint") {                   // fell: back to the checkpoint, or end the climb
+    if (c === "Space" || c === "KeyR" || c === "Enter") respawnAtCheckpoint();
+    else if (c === "Escape" || c === "KeyX") endRun(false, true);
+    return;
+  }
   if (overPhase === "sandbox") {
     if (c === "KeyR" || c === "Space" || c === "Enter") playLevel(ed.level, sbReturn);
     else if (c === "KeyE") openEditor(ed.level);
@@ -1782,6 +1855,11 @@ function land(s, impact, wasGround) {
   p.diving = false;
   p.wallKicked = false;                                      // landing gives your Wall Kick back
   if (s.kind === "ledge" || s.kind === "ground") p.lastLedge = s;
+  if (s.kind === "ledge" && mode === "main" && (!checkpoint || s.y > checkpoint.y)) {   // a new checkpoint!
+    checkpoint = s;
+    ring(s.x + s.w / 2, s.y + 20, 50, "125,255,122");
+    floatText(s.x + s.w / 2, s.y + 70, "CHECKPOINT!", "#7dff7a");
+  }
   if (s.crumble && !(s.crumbleT > 0)) s.crumbleT = 0.6;              // space junk starts to crumble
   if (s.bouncy) {                                                    // bouncy cloud: boing! (hold jump to go high)
     Object.assign(p, { vy: JUMP_V * 1.3, onGround: false, standOn: null, jumping: true, superAir: false, squash: 0.7 });
@@ -2407,6 +2485,7 @@ function update(dt) {
       sectionReached = si;
       sectionFlash = 3.5;
       newSpell = "";
+      if (mode === "main") saveBestBiome(si);   // you can start here next time
       if (SPELLS[si] && !p.spells.includes(si)) {
         p.spells.push(si);
         p.spellSel = p.spells.length - 1;
@@ -2683,6 +2762,122 @@ function drawBackItem(b, x, sy, t) {
   }
 }
 
+// ---------- Horizons (Round 13) ----------
+// Each land biome has ground on the horizon: it starts low on the screen when you enter the
+// biome and sinks out of sight as you climb above it, so nothing floats in mid-air.
+// snow: 0..1, how high up the snow line is (0.7 = snow on the top 30% of the tallest peaks)
+function drawRidge(base, hs, amp, color, flat = false, snow = 0) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(-10, VIEW_H + 20);
+  const step = (VIEW_W + 20) / (hs.length - 1);
+  hs.forEach((h, k) => {
+    const x = -10 + k * step, y = base - h * amp;
+    if (flat) { ctx.lineTo(x - step * 0.3, y); ctx.lineTo(x + step * 0.3, y); }   // mesas: flat tops
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo(VIEW_W + 10, VIEW_H + 20);
+  ctx.closePath();
+  ctx.fill();
+  if (snow > 0) {                                     // white above the snow line
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = "rgba(248,252,255,0.97)";
+    ctx.fillRect(-10, -10, VIEW_W + 20, base - amp * snow + 10);
+    ctx.restore();
+  }
+}
+
+function drawLandscapes(t) {
+  const m = (camY + VIEW_H / 2) / PX_PER_M;
+  SECTIONS.forEach((sec, i) => {
+    const w = sectionWeight(i);
+    if (w <= 0) return;
+    const p = clamp((m - sec.from) / (sec.to - sec.from), 0, 1);
+    const base = lerp(VIEW_H * 0.62, VIEW_H * 1.3, p);        // the horizon sinks as you climb
+    const R = RIDGES[sec.id];
+    ctx.save();
+    ctx.globalAlpha = w;
+    switch (sec.id) {
+      case "water": {
+        ctx.fillStyle = "rgba(200,240,255,0.07)";            // sunbeams from the surface
+        for (let k = 0; k < 4; k++) {
+          const x = 60 + k * 120 + Math.sin(t * 0.3 + k) * 20;
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 40, 0); ctx.lineTo(x - 40, VIEW_H); ctx.lineTo(x - 90, VIEW_H); ctx.fill();
+        }
+        drawRidge(base + 40, R.far, 40, "rgba(170,150,110,0.8)");       // sand dunes
+        ctx.strokeStyle = "rgba(60,170,110,0.75)";                       // kelp growing from the sea floor
+        ctx.lineWidth = 6;
+        for (let k = 0; k < 9; k++) {
+          const kx = 20 + k * 55, ky = base + 50;
+          ctx.beginPath();
+          for (let j = 0; j <= 8; j++) ctx.lineTo(kx + Math.sin(t * 1.5 + j * 0.7 + k) * 8, ky - j * 22);
+          ctx.stroke();
+        }
+        break;
+      }
+      case "jungle":
+        drawRidge(base - 30, R.far, 70, "rgba(90,150,110,0.85)");       // misty hills
+        ctx.fillStyle = "rgba(40,110,50,0.95)";                          // the tree line
+        for (let k = 0; k < 18; k++) {
+          const x = k * 29 - 5, y = base + 10 - R.near[k] * 30;
+          ctx.beginPath(); ctx.arc(x, y, 22 + R.near[k] * 12, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillRect(0, base + 10, VIEW_W, VIEW_H);
+        break;
+      case "mountains":
+        drawRidge(base - 40, R.far, 200, "rgba(140,150,175,0.9)", false, 0.82);   // far peaks, snowy tips
+        drawRidge(base + 30, R.near, 130, "rgba(100,96,104,0.97)");               // near peaks
+        break;
+      case "snowy":
+        drawRidge(base - 40, R.far, 210, "rgba(105,125,160,0.95)", false, 0.5);   // snow halfway down
+        drawRidge(base + 40, R.near, 130, "rgba(75,90,120,0.97)", false, 0.6);
+        break;
+      case "sky":
+        ctx.fillStyle = "rgba(255,255,255,0.9)";                         // a sea of clouds below you
+        for (let k = 0; k < 14; k++) {
+          ctx.beginPath(); ctx.arc(k * 36 + Math.sin(t * 0.2 + k) * 6, base + 40 - R.near[k] * 30, 34, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillRect(0, base + 40, VIEW_W, VIEW_H);
+        break;
+      case "darksky":
+        ctx.fillStyle = "rgba(40,44,70,0.95)";                           // storm clouds far below
+        for (let k = 0; k < 14; k++) {
+          ctx.beginPath(); ctx.arc(k * 36, base + 60 - R.near[k] * 26, 32, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillRect(0, base + 60, VIEW_W, VIEW_H);
+        break;
+      case "space": {
+        const ey = base + 900;                                          // the curve of the Earth
+        ctx.fillStyle = "rgba(120,190,255,0.35)";
+        ctx.beginPath(); ctx.arc(VIEW_W / 2, ey, 970, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#2f6fd0";
+        ctx.beginPath(); ctx.arc(VIEW_W / 2, ey, 950, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "rgba(90,170,80,0.8)";
+        ctx.beginPath(); ctx.ellipse(VIEW_W * 0.35, base + 70, 90, 20, 0.1, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.fillRect(VIEW_W * 0.55, base + 60, 70, 6);
+        break;
+      }
+      case "moon":
+        drawRidge(base + 20, R.far, 30, "rgba(190,184,168,0.95)");       // the Moon's grey ground
+        ctx.fillStyle = "rgba(140,134,120,0.7)";                         // craters
+        for (let k = 0; k < 6; k++) {
+          ctx.beginPath(); ctx.ellipse(30 + k * 85, base + 50 + (k % 2) * 30, 26, 7, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        break;
+      case "mars":
+        ctx.fillStyle = "rgba(230,200,180,0.8)";                         // Mars' two tiny moons
+        ctx.beginPath(); ctx.arc(110, 140, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(360, 90, 3, 0, Math.PI * 2); ctx.fill();
+        drawRidge(base - 20, R.far, 90, "rgba(170,85,55,0.85)");         // red hills
+        drawRidge(base + 40, R.near, 70, "rgba(130,58,38,0.95)", true);  // flat-topped mesas
+        break;
+    }
+    ctx.restore();
+  });
+}
+
 function drawBackdrop(t) {
   const weights = SECTIONS.map((_, i) => sectionWeight(i));
   for (const b of backdrop) {
@@ -2855,7 +3050,9 @@ function drawRecordLines() {
 // Still played flat, but drawn with depth: every platform is a solid slab whose top and
 // sides recede toward a vanishing point near the middle of the screen. The point slides a
 // little as you run, so the camera seems to look in at an angle.
-let VIEW3D = (() => { try { return localStorage.getItem("moonhop.view3d") === "1"; } catch (e) { return false; } })();
+let VIEW3D = (() => {                        // 3D is the default (Round 13); your own choice is remembered
+  try { const v = localStorage.getItem("moonhop.view3d"); return v === null ? true : v === "1"; } catch (e) { return true; }
+})();
 function toggle3D() {
   VIEW3D = !VIEW3D;
   try { localStorage.setItem("moonhop.view3d", VIEW3D ? "1" : "0"); } catch (e) { /* just for this visit */ }
@@ -3058,6 +3255,17 @@ function drawPlatform(s, time) {
   }
   ctx.restore();
   if (s.kind === "ledge" || s.kind === "pad") drawSign(s, sy);
+  if (s.kind === "ledge" && mode === "main") {                 // checkpoint flag: red, then green once reached
+    const fx = s.x + s.w / 2 + 6, got = checkpoint && checkpoint.y >= s.y;
+    ctx.fillStyle = "#d8d8e0";
+    ctx.fillRect(fx, sy - 30, 2, 30);
+    ctx.fillStyle = got ? "#7dff7a" : "#ff5a5a";
+    ctx.beginPath();
+    ctx.moveTo(fx + 2, sy - 30);
+    ctx.lineTo(fx + 16, sy - 25 + Math.sin(time * 6 + s.x) * 1.5);
+    ctx.lineTo(fx + 2, sy - 20);
+    ctx.fill();
+  }
   if (s.sweeper) drawSweeper(s, sy);
 }
 
@@ -4046,7 +4254,17 @@ function drawTitle(t) {
     txt(k, 62, 122 + i * 14, 8, "#ffffff");
     txt(v, VIEW_W - 62, 122 + i * 14, 8, "#9fe39a", "right");
   });
-  txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
+  if (bestBiome > 0) {                               // start in any biome you've already reached
+    const name = SECTIONS[Math.min(startBiome, bestBiome)].name;
+    if (IS_TOUCH) {
+      uiButton(`START IN: ${name}`, cx - 150, 230, 300, 26, () => { startBiome = (startBiome + 1) % (bestBiome + 1); },
+               SECTIONS[startBiome].color, 8);
+    } else {
+      txt(`B = START IN: ${name}`, cx, 240, 9, SECTIONS[startBiome].color, "center");
+    }
+  } else {
+    txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
+  }
   txt("TOP CLIMBERS", cx, 266, 12, "#ffd447", "center");
   drawBoard(cx, 292, -1, t);
   if (IS_TOUCH) {
@@ -4196,6 +4414,21 @@ function drawChoose(t) {
 
 function drawOver(t) {
   const cx = VIEW_W / 2;
+  if (overPhase === "checkpoint") {
+    panel(36, 200, VIEW_W - 72, 250);
+    txt("YOU FELL!", cx, 226, 20, "#ff8a7a", "center");
+    txt(`YOU CLIMBED ${result.height} m`, cx, 262, 10, "#ffffff", "center");
+    txt(`CHECKPOINT AT ${checkpoint.mark} m`, cx, 284, 9, "#7dff7a", "center");
+    if (overTimer > 0) return;
+    if (IS_TOUCH) {
+      uiButton("BACK TO CHECKPOINT", cx - 130, 316, 260, 40, respawnAtCheckpoint, "#7dff7a", 10);
+      uiButton("END THIS CLIMB", cx - 130, 368, 260, 34, () => endRun(false, true), "#c8d3ff", 9);
+    } else {
+      txt("SPACE = BACK TO THE CHECKPOINT", cx, 330, 10, "#7dff7a", "center");
+      txt("ESC = END THIS CLIMB", cx, 360, 10, "#c8d3ff", "center");
+    }
+    return;
+  }
   if (overPhase === "sandbox") {
     panel(36, 200, VIEW_W - 72, 230);
     if (result.won) {
@@ -4490,6 +4723,7 @@ function render(t) {
   drawBackdrop(t);
   updateVanishingPoint();
   drawMoon(t);
+  drawLandscapes(t);
   drawClouds(t);
   if (VIEW3D) drawDepthHaze();
   const main = mode === "main";
