@@ -5021,11 +5021,11 @@ function drawSandboxHub(t) {
   txt("PLAYING AS", cx, 500, 8, "#c8d3ff", "center");
   txt(currentChar().name || "?", cx, 514, 12, "#ffd447", "center");
   ctx.save();
-  ctx.translate(cx - 14, 616);
+  ctx.translate(cx - (currentChar().body === 1 ? 40 : 14), 616);          // the terrier is wider, so she moves left
   ctx.scale(2.2, 2.2);
   drawAstronaut(currentChar(), false, 0);
   ctx.restore();
-  drawDogAt(cx + 42, 572 + Math.sin(t * 3) * 3, -1, 1.6, t);
+  drawDogAt(cx + 80, 566 + Math.sin(t * 3) * 3, -1, 1.6, t);
 }
 
 function drawCharMaker(t) {
@@ -5034,11 +5034,11 @@ function drawCharMaker(t) {
   txt("CHARACTER MAKER", cx, 40, 16, "#ffd447", "center");
   // Big preview with the dog
   ctx.save();
-  ctx.translate(cx - 20, 210);
+  ctx.translate(cx - (currentChar().body === 1 ? 60 : 20), 210);          // the terrier is wider, so she moves left
   ctx.scale(3.6, 3.6);
   drawAstronaut(c, false, 0);
   ctx.restore();
-  drawDogAt(cx + 70, 120 + Math.sin(t * 3) * 4, -1, 2.4, t);
+  drawDogAt(cx + 125, 96 + Math.sin(t * 3) * 4, -1, 2.2, t);
 
   CHAR_ROWS.forEach((label, i) => {
     const y = 232 + i * 30, sel = i === cm.row;
