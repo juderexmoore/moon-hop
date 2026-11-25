@@ -79,12 +79,14 @@ const CREDITS = [
   { round: 13, who: "Daddy", what: "3D by default, checkpoint flags on every rest ledge, starting in any biome you've reached, and real horizons for every land biome." },
   { round: 14, who: "Daddy", what: "Portals! Jump into one for 1 of 10 mini-games. Win and get a power-up that stays (and stacks) until you fall. Plus mouse controls." },
   { round: 15, who: "G.", what: "Explore mode! Walk around a 3D world with Moon Base, the Frosty Peaks, the Jungle, Sunny Beach and the Crater Fields. Do quests for coins and spend them at Bolt's Shop on gear and power-ups for your next climb." },
+  { round: 16, who: "J.", what: "Earth's mantle under the sea, Jupiter and Saturn, ARCADE mode (1 life, never ends, past Uranus, Neptune and Pluto into the Endless Void), a DAMAGE % meter where knockback grows, spiky obstacles, more enemies, and chunkier pixels." },
 ];
 
 // ---------- Tuning ----------
 const VIEW_W = 480, VIEW_H = 720;     // the game screen (scaled to fit the window)
 const PX_PER_M = 20;                  // 20 pixels = 1 meter
-const MOON_METERS = 2000;             // the top of the climb (the black hole lives up here)
+const MANTLE_M = 200;                 // Round 16: Earth's mantle is under the sea, so the sea starts at 200 m
+const MOON_METERS = 2600;             // the top of the climb (the black hole lives up here)
 const MOON_Y = MOON_METERS * PX_PER_M;
 const MOON_R = 190;
 const TOWER_SEED = 2026;              // same tower every game, so scores are fair
@@ -133,12 +135,21 @@ const GIVERS = {
   mars: { look: "redcrystal", item: "shard", itemName: "RED CRYSTALS", power: "shield", color: "255,110,80" },
   sun: { look: "sunflower", item: "spark", itemName: "SUN SPARKS", power: "rapid", color: "255,190,60" },
   blackhole: { look: "starshard", item: "star", itemName: "STARDUST", power: "recharge", color: "200,120,255" },
+  mantle: { look: "redcrystal", item: "shard", itemName: "MAGMA GEMS", power: "shield", color: "255,120,60" },
+  jupiter: { look: "orb", item: "spark", itemName: "STORM SPARKS", power: "rapid", color: "255,200,140" },
+  saturn: { look: "snowflower", item: "flake", itemName: "RING ICE", power: "feather", color: "250,235,190" },
+  uranus: { look: "dandelion", item: "seed", itemName: "ICE SEEDS", power: "speed", color: "180,250,250" },
+  neptune: { look: "orb", item: "spark", itemName: "STORM SPARKS", power: "rapid", color: "120,170,255" },
+  pluto: { look: "moonrock", item: "dust", itemName: "PLUTO DUST", power: "boost", color: "240,225,210" },
+  kuiper: { look: "starshard", item: "star", itemName: "COMET DUST", power: "recharge", color: "168,184,208" },
+  nebula: { look: "sunflower", item: "star", itemName: "NEBULA STARS", power: "boost", color: "255,143,208" },
+  void: { look: "starshard", item: "star", itemName: "VOID STARS", power: "shield", color: "255,255,255" },
 };
 const giverAt = y => GIVERS[SECTIONS[sectionAt(y / PX_PER_M)].id];
 
 // ---------- Confetti and space (Round 2, space moved up in Round 4) ----------
 const CONFETTI_AT = 100 * PX_PER_M;   // confetti party when you reach 100 m
-const SPACE_Y = 1000 * PX_PER_M;      // outer space starts at 1000 m
+const SPACE_Y = 1200 * PX_PER_M;      // outer space starts at 1200 m
 const SPACE_GRAVITY = 0.55;           // gravity in space (x normal) = floaty, high jumps
 const SPACE_MAX_FALL = 0.6;           // you fall slower in space too (x normal)
 // Each biome has its own gravity (see SECTIONS below): floaty in the water, light in space.
@@ -147,7 +158,7 @@ const fallAt = y => SECTIONS[sectionAt(y / PX_PER_M)].fall;
 const CONFETTI_COLORS = ["#ff5a5a", "#ffd447", "#5ad1ff", "#7dff7a", "#d77dff", "#ff9f40", "#ffffff"];
 
 // ---------- The danger zone (Round 3) ----------
-const DANGER_Y = 300 * PX_PER_M;      // the difficulty turn: from 300 m up it gets tough
+const DANGER_Y = 500 * PX_PER_M;      // the difficulty turn: from 500 m (the mountains) up it gets tough
 const DANGER_SHRINK = 0.7;            // platforms up there are 30% smaller
 const DANGER_MIN_W = 34;
 const MOVER_CHANCE = [0.25, 0.45];    // share of platforms that slide (at 300 m, near the Moon)
@@ -193,17 +204,33 @@ const ENEMY_INFO = {
   sunbird: { hp: 3, r: 13, move: "dive", art: "bird", fill: "#ffb347", wing: "#ff5a3a", color: "255,179,71" },
   voideye: { hp: 4, r: 15, move: "drift", art: "eye", fill: "#1a0a2a", color: "195,155,255" },
   comet: { hp: 2, r: 11, move: "zip", art: "flame", fill: "#8fd0ff", core: "#ffffff", color: "143,208,255" },
+  // New in Round 16: the mantle and the planets. dmg = how much DAMAGE % a bump adds (normal is 11).
+  magmablob: { hp: 3, r: 14, move: "patrol", art: "flame", fill: "#ff5a1a", core: "#ffd447", color: "255,90,26", dmg: 13 },
+  lavabat: { hp: 2, r: 12, move: "dive", art: "bird", fill: "#3a2020", wing: "#ff5a1a", color: "255,90,26", dmg: 13 },
+  gasjelly: { hp: 3, r: 16, move: "drift", art: "jelly", fill: "255,190,130", color: "255,190,130", dmg: 12 },
+  stormbird: { hp: 3, r: 13, move: "dive", art: "bird", fill: "#e8b27a", wing: "#a0603a", color: "232,178,122", dmg: 14 },
+  ringrock: { hp: 3, r: 15, move: "patrol", art: "cloud", fill: "#c8b890", color: "200,184,144", dmg: 13 },
+  icecomet: { hp: 2, r: 11, move: "zip", art: "flame", fill: "#bfe8ff", core: "#ffffff", color: "191,232,255", dmg: 13 },
+  frostjelly: { hp: 3, r: 15, move: "drift", art: "jelly", fill: "160,250,250", color: "160,250,250", dmg: 13 },
+  stormeye: { hp: 4, r: 15, move: "drift", art: "eye", fill: "#10184a", color: "90,139,255", dmg: 15 },
+  // Obstacles: spiky balls that circle a platform. Blasters can't break them, so time your jump!
+  spikeball: { hp: 1, r: 12, move: "orbit", art: "spike", fill: "#9aa3b8", color: "154,163,184", dmg: 16, obstacle: true },
   // These fly in during their sections (Round 7), so they're never placed ahead of time.
-  asteroid: { hp: 2, r: 13, color: "150,130,110" },
-  flare: { hp: 1, r: 9, color: "255,150,60" },
-  boss: { hp: 40, r: 34, color: "255,190,70" },
+  asteroid: { hp: 2, r: 13, color: "150,130,110", dmg: 13 },
+  flare: { hp: 1, r: 9, color: "255,150,60", dmg: 14 },
+  boss: { hp: 40, r: 34, color: "255,190,70", dmg: 18 },
 };
 // Which enemies live in each biome
 const BIOME_ENEMIES = {
-  water: ["puffer", "jellyfish"], jungle: ["parrot", "buzzer"], mountains: ["hawk", "rockbat"],
+  mantle: ["magmablob", "lavabat"], water: ["puffer", "jellyfish"], jungle: ["parrot", "buzzer"], mountains: ["hawk", "rockbat"],
   snowy: ["snowpuff", "icebird"], sky: ["grumble", "buzzer"], darksky: ["sparky", "thundercloud"],
   space: ["ufo", "alien"], moon: ["moonmoth", "alien"], mars: ["dustdevil", "marsufo"],
+  jupiter: ["gasjelly", "stormbird"], saturn: ["ringrock", "icecomet"],
   sun: ["firesprite", "sunbird"], blackhole: ["voideye", "comet"],
+  // arcade mode only, past the Black Hole
+  uranus: ["frostjelly", "icebird"], neptune: ["stormeye", "sparky"], pluto: ["moonmoth", "snowpuff"],
+  kuiper: ["comet", "rockbat", "icecomet"], nebula: ["alien", "parrot", "gasjelly"],
+  void: ["voideye", "stormeye", "ufo", "comet"],
 };
 
 // ---------- Bosses (Round 8, more in Round 10) ----------
@@ -211,11 +238,11 @@ const BIOME_ENEMIES = {
 // shots/shotGap/diveGap: [normal, angry] (angry = below half health). ammo is what it throws.
 // Beating the "final" boss wins the whole game.
 const BOSSES = [
-  { at: 500, name: "BOULDER BULLY", mini: true, kind: "golem", hp: 14, r: 28, ammo: "asteroid", speed: 180,
+  { at: 700, name: "BOULDER BULLY", mini: true, kind: "golem", hp: 14, r: 28, ammo: "asteroid", speed: 180,
     shots: [2, 3], shotGap: [2.2, 1.6], diveGap: [8, 6] },
-  { at: 1700, name: "THE SUN KING", kind: "sun", hp: 25, r: 34, ammo: "flare", speed: 210,
+  { at: 2300, name: "THE SUN KING", kind: "sun", hp: 25, r: 34, ammo: "flare", speed: 210,
     shots: [3, 5], shotGap: [1.6, 1.1], diveGap: [6, 4] },
-  { at: 1900, name: "THE BLACK HOLE", final: true, kind: "void", hp: 45, r: 40, ammo: "flare", speed: 230,
+  { at: 2500, name: "THE BLACK HOLE", final: true, kind: "void", hp: 45, r: 40, ammo: "flare", speed: 230,
     tint: "200,120,255", shots: [5, 7], shotGap: [1.5, 1.0], diveGap: [5, 3.5] },
 ];
 const ARENA_H = 560;                  // how tall the boss arena is (pixels above the ledge)
@@ -224,29 +251,49 @@ const ARENA_H = 560;                  // how tall the boss arena is (pixels abov
 // From the bottom of the sea to the black hole. Each one has its own sky, platforms,
 // background, gravity (x normal), fall speed (x normal) and something new.
 const SECTIONS = [
-  { id: "water", name: "UNDER THE SEA", from: 0, to: 120, color: "#5ad1ff", tip: "WATER MAKES YOU FLOATY",
+  { id: "mantle", name: "EARTH'S MANTLE", from: 0, to: 200, color: "#ff7a3a", tip: "LAVA BURSTS FROM BELOW! COOL ROCK CRUMBLES",
+    sky: [[120, 30, 12], [70, 22, 16]], top: [255, 150, 70], body: [95, 45, 35], gravity: 1, fall: 1 },
+  { id: "water", name: "UNDER THE SEA", from: 200, to: 320, color: "#5ad1ff", tip: "WATER MAKES YOU FLOATY",
     sky: [[20, 70, 140], [40, 120, 190]], top: [90, 210, 180], body: [60, 80, 120], gravity: 0.6, fall: 0.45 },
-  { id: "jungle", name: "THE JUNGLE", from: 120, to: 300, color: "#7dff7a", tip: "BOUNCY MUSHROOMS! HOLD JUMP",
+  { id: "jungle", name: "THE JUNGLE", from: 320, to: 500, color: "#7dff7a", tip: "BOUNCY MUSHROOMS! HOLD JUMP",
     sky: [[110, 190, 130], [140, 205, 175]], top: [100, 200, 60], body: [110, 75, 45], gravity: 1, fall: 1 },
-  { id: "mountains", name: "THE MOUNTAINS", from: 300, to: 520, color: "#d2c8b4", tip: "FALLING ROCKS! THE DANGER ZONE",
+  { id: "mountains", name: "THE MOUNTAINS", from: 500, to: 720, color: "#d2c8b4", tip: "FALLING ROCKS! THE DANGER ZONE",
     sky: [[140, 180, 225], [115, 155, 210]], top: [160, 155, 140], body: [100, 95, 90], gravity: 1, fall: 1 },
-  { id: "snowy", name: "SNOWY PEAKS", from: 520, to: 700, color: "#e6f4ff", tip: "ICY PLATFORMS ARE SLIPPERY",
+  { id: "snowy", name: "SNOWY PEAKS", from: 720, to: 900, color: "#e6f4ff", tip: "ICY PLATFORMS ARE SLIPPERY",
     sky: [[185, 205, 235], [150, 175, 220]], top: [235, 245, 255], body: [140, 160, 185], gravity: 1, fall: 1 },
-  { id: "sky", name: "THE SKY", from: 700, to: 850, color: "#ffffff", tip: "WATCH OUT FOR WIND GUSTS",
+  { id: "sky", name: "THE SKY", from: 900, to: 1050, color: "#ffffff", tip: "WATCH OUT FOR WIND GUSTS",
     sky: [[100, 165, 245], [70, 125, 215]], top: [255, 255, 255], body: [200, 210, 235], gravity: 1, fall: 1 },
-  { id: "darksky", name: "UPPER ATMOSPHERE", from: 850, to: 1000, color: "#ffd447", tip: "LIGHTNING STORMS!",
+  { id: "darksky", name: "UPPER ATMOSPHERE", from: 1050, to: 1200, color: "#ffd447", tip: "LIGHTNING STORMS!",
     sky: [[40, 40, 95], [18, 18, 58]], top: [255, 214, 90], body: [60, 62, 92], gravity: 1, fall: 1 },
-  { id: "space", name: "OUTER SPACE", from: 1000, to: 1200, color: "#a0c8ff", tip: "LOW GRAVITY! SPACE JUNK CRUMBLES",
+  { id: "space", name: "OUTER SPACE", from: 1200, to: 1400, color: "#a0c8ff", tip: "LOW GRAVITY! SPACE JUNK CRUMBLES",
     sky: [[10, 12, 40], [8, 8, 30]], top: [160, 200, 255], body: [110, 116, 130], gravity: 0.55, fall: 0.6 },
-  { id: "moon", name: "THE MOON", from: 1200, to: 1400, color: "#fff3b0", tip: "MOON GRAVITY! PLATFORMS BLINK OUT",
+  { id: "moon", name: "THE MOON", from: 1400, to: 1600, color: "#fff3b0", tip: "MOON GRAVITY! PLATFORMS BLINK OUT",
     sky: [[14, 14, 26], [10, 10, 20]], top: [236, 234, 226], body: [128, 124, 116], gravity: 0.42, fall: 0.55 },
-  { id: "mars", name: "MARS", from: 1400, to: 1600, color: "#ff8a5a", tip: "RED DUST STORMS!",
+  { id: "mars", name: "MARS", from: 1600, to: 1800, color: "#ff8a5a", tip: "RED DUST STORMS!",
     sky: [[120, 60, 40], [80, 36, 28]], top: [230, 120, 80], body: [140, 60, 40], gravity: 0.7, fall: 0.75 },
-  { id: "sun", name: "THE SUN", from: 1600, to: 1800, color: "#ff9f40", tip: "SOLAR FLARES! THE SUN KING!",
+  { id: "jupiter", name: "JUPITER", from: 1800, to: 2000, color: "#e8b27a", tip: "HEAVY GRAVITY! GIANT STORMS!",
+    sky: [[150, 100, 60], [100, 64, 40]], top: [240, 200, 150], body: [160, 100, 60], gravity: 1.08, fall: 1 },
+  { id: "saturn", name: "SATURN'S RINGS", from: 2000, to: 2200, color: "#f2d68a", tip: "ICE CHUNKS FROM THE RINGS! SLIPPERY!",
+    sky: [[60, 50, 40], [30, 26, 34]], top: [250, 232, 175], body: [150, 130, 90], gravity: 0.8, fall: 0.8 },
+  { id: "sun", name: "THE SUN", from: 2200, to: 2400, color: "#ff9f40", tip: "SOLAR FLARES! THE SUN KING!",
     sky: [[70, 28, 18], [40, 16, 20]], top: [255, 200, 90], body: [170, 70, 40], gravity: 0.55, fall: 0.6 },
-  { id: "blackhole", name: "THE BLACK HOLE", from: 1800, to: 2000, color: "#c39bff", tip: "ASTEROIDS! THE FINAL BOSS AWAITS",
+  { id: "blackhole", name: "THE BLACK HOLE", from: 2400, to: 2600, color: "#c39bff", tip: "ASTEROIDS! THE FINAL BOSS AWAITS",
     sky: [[24, 8, 36], [4, 0, 8]], top: [190, 120, 255], body: [50, 30, 70], gravity: 0.55, fall: 0.6 },
+  // Only ARCADE mode goes past the Black Hole. It never ends: the Endless Void goes on forever.
+  { id: "uranus", name: "URANUS", from: 2600, to: 2850, color: "#8ff0f0", tip: "ICY WIND GUSTS!", arcade: true,
+    sky: [[50, 140, 150], [25, 80, 100]], top: [180, 250, 250], body: [70, 140, 150], gravity: 0.8, fall: 0.8 },
+  { id: "neptune", name: "NEPTUNE", from: 2850, to: 3100, color: "#5a8bff", tip: "SUPER STORMS! PLATFORMS BLINK OUT", arcade: true,
+    sky: [[20, 40, 120], [10, 18, 70]], top: [120, 170, 255], body: [40, 60, 140], gravity: 0.9, fall: 0.9 },
+  { id: "pluto", name: "PLUTO", from: 3100, to: 3350, color: "#e8d8c8", tip: "TINY PLANET, TINY GRAVITY!", arcade: true,
+    sky: [[24, 20, 34], [10, 10, 18]], top: [240, 225, 210], body: [130, 115, 105], gravity: 0.45, fall: 0.5 },
+  { id: "kuiper", name: "THE KUIPER BELT", from: 3350, to: 3600, color: "#a8b8d0", tip: "COMET SHOWERS!", arcade: true,
+    sky: [[16, 18, 30], [6, 8, 16]], top: [190, 205, 225], body: [90, 100, 120], gravity: 0.55, fall: 0.6 },
+  { id: "nebula", name: "RAINBOW NEBULA", from: 3600, to: 3900, color: "#ff8fd0", tip: "STORMS, FLARES AND ROCKS AT ONCE!", arcade: true,
+    sky: [[90, 30, 110], [30, 20, 80]], top: [255, 160, 220], body: [110, 60, 140], gravity: 0.6, fall: 0.65 },
+  { id: "void", name: "THE ENDLESS VOID", from: 3900, to: 4200, color: "#ffffff", tip: "IT NEVER ENDS. HOW FAR CAN YOU GO?", arcade: true,
+    sky: [[10, 10, 14], [0, 0, 0]], top: [255, 255, 255], body: [70, 70, 90], gravity: 0.6, fall: 0.65 },
 ];
+const MAIN_SECTIONS = SECTIONS.filter(s => !s.arcade).length;
 const secIndex = id => SECTIONS.findIndex(s => s.id === id);
 const sectionAt = m => { for (let i = SECTIONS.length - 1; i > 0; i--) if (m >= SECTIONS[i].from) return i; return 0; };
 const BLINK_CYCLE = 3.4, BLINK_ON = 2.2;   // aurora platforms: solid 2.2 s, gone 1.2 s
@@ -330,7 +377,7 @@ const mainCtx = canvas.getContext("2d");
 // The pixel look (Round 7): the world is drawn at half size, then blown up with
 // chunky pixels. Words stay sharp: any text drawn during the world part waits in
 // textQueue and goes on top afterward.
-const PIXEL = 2;
+const PIXEL = 3;                        // Round 16: chunkier pixels (was 2)
 const worldCanvas = document.createElement("canvas");
 worldCanvas.width = VIEW_W / PIXEL;
 worldCanvas.height = VIEW_H / PIXEL;
@@ -431,123 +478,118 @@ function jumpReach(gap) {
   return MAX_RUN * (JUMP_V + Math.sqrt(disc)) / GRAVITY;
 }
 
-function buildTower() {
-  const rnd = mulberry32(TOWER_SEED);
-  const R = (a, b) => a + (b - a) * rnd();
-  const list = [{ x: -40, y: 0, w: VIEW_W + 80, kind: "ground" }];
-  const padY = MOON_Y - 80;
-  let prev = { x: VIEW_W / 2 - 80, y: 0, w: 160 };
-  let nextMark = 100 * PX_PER_M;
+// Round 16: the climb is made by a generator, so ARCADE mode can keep making more of it forever.
+// Every part rolls its own dice, so the climb comes out the same every game (fair for high scores).
+// padY = where the last pad goes (Infinity = never ends). `out` = the lists to fill.
+function makeEnemy(type, hx, hy, rng) {
+  const info = ENEMY_INFO[type];
+  return {
+    type, move: info.move, hx, hy, maxHp: info.hp, r: info.r, ph: rng() * 6.28, amp: 70 + rng() * 80, period: 4.5 + rng() * 2.5,
+    x: hx, y: hy, hp: info.hp, alive: true, t: 0, pvx: 0, pvy: 0, frozen: 0, burn: 0, burnTick: 0, flash: 0, moonCd: 0, mode: "hover", cd: 1.5,
+  };
+}
+const makePoppy = (x, y, plat, ph) => ({ x, y, plat, off: x - plat.x, cool: 0, bounce: 0, ph, giver: giverAt(y) });
 
-  while (true) {
-    const d = prev.y / MOON_Y;                     // 0 at the ground, 1 at the Moon
-    const maxGap = lerp(74, 108, d);
-    const remaining = padY - prev.y;
-    if (remaining <= maxGap) break;
+function makeWorldGen(padY, out) {
+  const rnd = mulberry32(TOWER_SEED), R = (a, b) => a + (b - a) * rnd();
+  const dz = mulberry32(TOWER_SEED + 2), DR = (a, b) => a + (b - a) * dz();
+  const sr = mulberry32(TOWER_SEED + 4), pr = mulberry32(TOWER_SEED + 1);
+  const er = mulberry32(TOWER_SEED + 3), ER = (a, b) => a + (b - a) * er();
+  const orr = mulberry32(TOWER_SEED + 5);
+  const g = { top: 0, done: false, enemyM: 30, seen: {}, maxM: padY === Infinity ? Infinity : MOON_METERS - 40 };
+  let prev = { x: VIEW_W / 2 - 80, y: 0, w: 160 }, nextMark = 100 * PX_PER_M;
+  const ground = { x: -40, y: 0, w: VIEW_W + 80, kind: "ground" };
+  out.tower.push(ground);
+  out.poppies.push(makePoppy(130, 0, ground, 0));          // one on the ground to say hello
 
+  function nextPlatform() {
+    const d = Math.min(1, prev.y / MOON_Y);                  // 0 at the ground, 1 at the Black Hole (and beyond)
+    const maxGap = lerp(74, 108, d), remaining = padY - prev.y;
+    if (remaining <= maxGap) return null;
     let gap = R(lerp(56, 92, d), maxGap);
     if (remaining - gap < 50) gap = remaining / 2;
-    let y = prev.y + gap;
-    let kind = "step", mark = 0;
+    let y = prev.y + gap, kind = "step", mark = 0;
     if (y >= nextMark) {
       kind = "ledge";
       mark = nextMark / PX_PER_M;
       if (nextMark - prev.y >= 45) y = nextMark;
       nextMark += 100 * PX_PER_M;
     }
-
-    // Platforms get narrower and farther apart the higher you go,
-    // and 30% smaller again past the difficulty turn.
+    // Platforms get narrower and farther apart the higher you go, and 30% smaller past the difficulty turn.
     let w = kind === "ledge" ? 190 : clamp(R(lerp(130, 48, d), lerp(170, 74, d)), 44, 190);
     if (kind === "step" && y >= DANGER_Y) w = Math.max(DANGER_MIN_W, w * DANGER_SHRINK);
     const edgeMax = jumpReach(y - prev.y) * lerp(0.3, 0.7, d);
     const edge = R(-0.35 * Math.min(w, prev.w), edgeMax);   // sideways gap between edges
-    const dist = (prev.w + w) / 2 + edge;
-    const pc = prev.x + prev.w / 2;
-    const dir = rnd() < 0.5 ? -1 : 1;
+    const dist = (prev.w + w) / 2 + edge, pc = prev.x + prev.w / 2, dir = rnd() < 0.5 ? -1 : 1;
     const lo = w / 2 + 6, hi = VIEW_W - w / 2 - 6;
     let c = pc + dir * dist;
     if (c < lo || c > hi) c = pc - dir * dist;
     c = clamp(c, lo, hi);
-
     const p = { x: c - w / 2, y, w, kind };
     if (kind === "ledge") p.mark = mark;
-    list.push(p);
     prev = p;
+    return p;
   }
-  list.push({ x: VIEW_W / 2 - 90, y: padY, w: 180, kind: "pad" });
-  return list;
-}
-const tower = buildTower();
 
-// The difficulty turn: above DANGER_Y some platforms move or get a sweeper.
-// Rest ledges and the last pad are left alone. Uses its own dice, so it's the same every game.
-function applyDangerZone() {
-  const rnd = mulberry32(TOWER_SEED + 2);
-  const R = (a, b) => a + (b - a) * rnd();
-  for (const s of tower) {
-    if (s.kind !== "step" || s.y < DANGER_Y) continue;
-    const d = (s.y - DANGER_Y) / (MOON_Y - DANGER_Y);     // 0 at the turn, 1 at the Moon
-    if (rnd() < lerp(MOVER_CHANCE[0], MOVER_CHANCE[1], d)) {
-      const room = Math.min(s.x - 4, VIEW_W - 4 - (s.x + s.w));
-      const amp = Math.min(R(40, 90), room);
-      if (amp >= 20) Object.assign(s, { baseX: s.x, amp, period: R(2.5, 4.5), phase: R(0, 6.28), ang: 0, dx: 0 });
-    } else if (s.w >= 44 && rnd() < lerp(SWEEPER_CHANCE[0], SWEEPER_CHANCE[1], d)) {
-      s.sweeper = { period: R(1.8, 2.8), phase: R(0, 1), u: 0, x: s.x, dir: 1, frozen: 0 };
+  function decorate(s) {
+    if (s.kind === "step" && s.y >= DANGER_Y) {              // the difficulty turn: some slide, some get a sweeper
+      const d = Math.min(1, (s.y - DANGER_Y) / (MOON_Y - DANGER_Y));
+      if (dz() < lerp(MOVER_CHANCE[0], MOVER_CHANCE[1], d)) {
+        const room = Math.min(s.x - 4, VIEW_W - 4 - (s.x + s.w)), amp = Math.min(DR(40, 90), room);
+        if (amp >= 20) Object.assign(s, { baseX: s.x, amp, period: DR(2.5, 4.5), phase: DR(0, 6.28), ang: 0, dx: 0 });
+      } else if (s.w >= 44 && dz() < lerp(SWEEPER_CHANCE[0], SWEEPER_CHANCE[1], d)) {
+        s.sweeper = { period: DR(1.8, 2.8), phase: DR(0, 1), u: 0, x: s.x, dir: 1, frozen: 0 };
+      }
+    }
+    if (s.kind === "step") {                                 // each biome's special platforms
+      const sec = SECTIONS[sectionAt(s.y / PX_PER_M)].id, r = sr(), free = !s.amp && !s.sweeper;
+      if ((sec === "jungle" || sec === "nebula") && r < 0.35) s.bouncy = true;                        // bouncy mushrooms
+      else if (["snowy", "saturn", "uranus", "pluto"].includes(sec) && r < 0.4 && !s.sweeper) s.icy = true;   // slippery ice
+      else if (["space", "kuiper", "void"].includes(sec) && r < 0.3 && free) s.crumble = true;        // crumbling space junk
+      else if (sec === "mantle" && r < 0.15 && free) s.crumble = true;                                  // cooling rock
+      else if (["moon", "neptune"].includes(sec) && r < 0.3 && free) { s.blink = true; s.blinkPh = sr() * BLINK_CYCLE; }
+    }
+    if ((s.kind === "step" || s.kind === "ledge") && pr() < POPPY_CHANCE) {
+      const lo = s.kind === "ledge" ? s.x + s.w * 0.55 : s.x + 10;   // stay clear of ledge signs
+      out.poppies.push(makePoppy(lerp(lo, s.x + s.w - 10, pr()), s.y, s, pr() * 6.28));
+    }
+    // Obstacles (Round 16): spiky balls circle some platforms, more of them the higher you go
+    if (s.kind === "step" && s.y > 60 * PX_PER_M && !s.amp && orr() < lerp(0.12, 0.35, Math.min(1, s.y / MOON_Y))) {
+      const e = makeEnemy("spikeball", s.x + s.w / 2, s.y + 18, orr);
+      Object.assign(e, { orbitR: Math.max(s.w / 2 + 26, 52), orbitSp: (orr() < 0.5 ? -1 : 1) * (1.3 + orr() * 1.1) });
+      out.enemies.push(e);
+    }
+    if (s.amp) out.movers.push(s);
+    if (s.sweeper) out.sweepers.push(s);
+  }
+
+  // Enemies float between the platforms, more and more of them the higher you go.
+  function addEnemies(toY) {
+    while (g.enemyM < g.maxM && g.enemyM * PX_PER_M < toY) {
+      const m = g.enemyM, biome = SECTIONS[sectionAt(m)].id, kinds = BIOME_ENEMIES[biome];
+      g.seen[biome] = (g.seen[biome] || 0) + 1;              // they take turns, so you meet them all
+      const type = kinds[(g.seen[biome] + 1) % kinds.length];
+      out.enemies.push(makeEnemy(type, ER(40, VIEW_W - 40), m * PX_PER_M + ER(30, 70), er));
+      const busier = m > MOON_METERS ? Math.max(0.55, 1 - (m - MOON_METERS) / 4000) : 1;   // arcade: busier forever
+      g.enemyM += lerp(50, 22, Math.min(1, m / MOON_METERS)) * ER(0.8, 1.2) * busier;
     }
   }
-}
-applyDangerZone();
 
-// Section platforms (Round 7): bouncy clouds, blinking aurora platforms and crumbling space junk.
-function applySections() {
-  const rnd = mulberry32(TOWER_SEED + 4);
-  for (const s of tower) {
-    if (s.kind !== "step") continue;
-    const sec = SECTIONS[sectionAt(s.y / PX_PER_M)].id, r = rnd();
-    if (sec === "jungle" && r < 0.35) s.bouncy = true;                                   // bouncy mushrooms
-    else if (sec === "snowy" && r < 0.4 && !s.sweeper) s.icy = true;                     // slippery ice
-    else if (sec === "space" && r < 0.3 && !s.amp && !s.sweeper) s.crumble = true;       // crumbling space junk
-    else if (sec === "moon" && r < 0.3 && !s.amp && !s.sweeper) { s.blink = true; s.blinkPh = rnd() * BLINK_CYCLE; }
-  }
+  g.extend = toY => {
+    while (!g.done && g.top < toY) {
+      const s = nextPlatform();
+      if (!s) { g.done = true; out.tower.push({ x: VIEW_W / 2 - 90, y: padY, w: 180, kind: "pad" }); break; }
+      decorate(s);
+      out.tower.push(s);
+      g.top = s.y;
+    }
+    addEnemies(g.done ? Infinity : toY);
+  };
+  return g;
 }
-applySections();
-const movers = tower.filter(s => s.amp);
-const sweepers = tower.filter(s => s.sweeper);
 
-// Poppies use their own dice, so the tower itself stays exactly the same.
-// Each poppy remembers its platform, so it rides along if the platform moves.
-function buildPoppies() {
-  const rnd = mulberry32(TOWER_SEED + 1);
-  const list = [{ x: 130, y: 0, plat: tower[0] }];     // one on the ground to say hello
-  for (const s of tower) {
-    if (s.kind !== "step" && s.kind !== "ledge") continue;
-    if (rnd() >= POPPY_CHANCE) continue;
-    const lo = s.kind === "ledge" ? s.x + s.w * 0.55 : s.x + 10;   // stay clear of ledge signs
-    list.push({ x: lerp(lo, s.x + s.w - 10, rnd()), y: s.y, plat: s });
-  }
-  for (const f of list) Object.assign(f, { off: f.x - f.plat.x, cool: 0, bounce: 0, ph: rnd() * 6.28, giver: giverAt(f.y) });
-  return list;
-}
-const poppies = buildPoppies();
-
-// Enemies float between the platforms. Same spots every game; more of them higher up.
-function buildEnemies() {
-  const rnd = mulberry32(TOWER_SEED + 3);
-  const R = (a, b) => a + (b - a) * rnd();
-  const list = [], seen = {};
-  for (let m = 30; m < MOON_METERS - 40; m += lerp(70, 30, m / MOON_METERS) * R(0.8, 1.2)) {
-    const biome = SECTIONS[sectionAt(m)].id, kinds = BIOME_ENEMIES[biome];   // each biome has its own enemies
-    seen[biome] = (seen[biome] || 0) + 1;                        // they take turns, so you meet both
-    const type = kinds[(seen[biome] + 1) % kinds.length];
-    list.push({
-      type, move: ENEMY_INFO[type].move, hx: R(40, VIEW_W - 40), hy: m * PX_PER_M + R(30, 70), maxHp: ENEMY_INFO[type].hp,
-      r: ENEMY_INFO[type].r, ph: R(0, 6.28), amp: R(70, 150), period: R(4.5, 7),
-    });
-  }
-  return list;
-}
-const enemies = buildEnemies();
+const tower = [], movers = [], sweepers = [], poppies = [], enemies = [];
+makeWorldGen(MOON_Y - 80, { tower, movers, sweepers, poppies, enemies }).extend(Infinity);
 
 // ---------- Swapping worlds: the main climb, or a level you built ----------
 const MAIN_WORLD = { tower: tower.slice(), movers: movers.slice(), sweepers: sweepers.slice(),
@@ -732,11 +774,14 @@ const BACKDROP_KINDS = {
   water: [["fish", 12]], jungle: [], mountains: [], snowy: [],
   sky: [], darksky: [["thunderhead", 8], ["ribbon", 4]], space: [["satellite", 8]],
   moon: [["earth", 1]], mars: [], sun: [["sun", 1]], blackhole: [["rock", 16]],
+  mantle: [["ember", 22]], jupiter: [["jupiter", 1]], saturn: [["saturn", 1], ["rock", 10]],
+  uranus: [["uranus", 1]], neptune: [["neptune", 1], ["thunderhead", 6]], pluto: [["pluto", 1]],
+  kuiper: [["rock", 20]], nebula: [["ribbon", 8]], void: [["rock", 8], ["satellite", 3]],
 };
 // Bumpy outlines for the horizons: a far ridge and a near ridge for each land biome.
 const ridge = n => Array.from({ length: n }, (_, k) => 0.35 + 0.65 * Math.abs(Math.sin(k * 1.7 + deco() * 2)) * deco());
 const RIDGES = Object.fromEntries(SECTIONS.map(s => [s.id, { far: ridge(14), near: ridge(18) }]));
-const BIG_ONES = ["sun", "earth", "moonbig", "mars"];        // one big thing in the middle of the biome
+const BIG_ONES = ["sun", "earth", "moonbig", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"];        // one big thing in the middle of the biome
 const backdrop = [];
 SECTIONS.forEach((sec, i) => {
   for (const [kind, count] of BACKDROP_KINDS[sec.id]) {
@@ -791,7 +836,14 @@ const bossActive = () => boss.phase === "intro" || boss.phase === "fight";
 const barrierUp = () => boss.phase === "waiting" || bossActive();
 let creditsT = 0;               // how far the credits have scrolled
 let checkpoint = null;          // the last rest ledge you reached this climb (Round 13)
-let bestBiome = (() => { try { return Number(localStorage.getItem("moonhop.bestBiome")) || 0; } catch (e) { return 0; } })();
+let bestBiome = (() => {
+  try {
+    const v = localStorage.getItem("moonhop.bestBiome16");
+    if (v !== null) return Number(v) || 0;
+    const old = Number(localStorage.getItem("moonhop.bestBiome")) || 0;   // Round 16 added the mantle, Jupiter and Saturn
+    return old <= 0 ? 0 : old <= 8 ? old + 1 : old + 3;
+  } catch (e) { return 0; }
+})();
 let startBiome = 0;             // which biome the next climb starts in (title screen: B)
 const solidNow = s => !(s.gone > 0) && !(s.blink && (runTime + s.blinkPh) % BLINK_CYCLE > BLINK_ON);
 let moonletAngle = 0;
@@ -822,7 +874,7 @@ function resetWorld() {
     reboundsUsed: 0, flagUsed: false, rerollsUsed: 0,
     timeCd: 0, blinkCd: 0, cloudCd: 0, fireCd: 0, shotCount: 0, spellTime: 0,
     spells: [0], spellSel: 0, spellCds: {}, domeTime: 0,
-    fxShield: 0, fxFeather: 0, fxSpeed: 0, fxRapid: 0, powerTextCd: 0, guardT: 0,
+    fxShield: 0, fxFeather: 0, fxSpeed: 0, fxRapid: 0, powerTextCd: 0, guardT: 0, dmgPct: 0, dmgShake: 0,
   });
   sectionReached = 0;
   sectionFlash = 0;
@@ -831,6 +883,7 @@ function resetWorld() {
   Object.assign(wind, { t: 3, phase: "calm", timer: 0 });
   flareT = 1.5;
   rockT = 1;
+  lavaT = 1.5;
   Object.assign(boss, { phase: "none", def: null, e: null, timer: 0, ledge: null, gate: null, beaten: [], prize: false });
   checkpoint = null;
   relics = {}; portal = null; portalT = PORTAL.first; mg = null; mouseSteer = false;
@@ -876,8 +929,35 @@ function resetEnemies() {
   }
 }
 
+// ARCADE MODE (Round 16): one life (no checkpoints, no Rebound or Safety Flag), and past the
+// Black Hole the climb goes on forever: Uranus, Neptune, Pluto, the Kuiper Belt, a nebula and
+// the Endless Void. It's built as you climb, and old platforms far below are thrown away.
+let arcade = false, arcadeGen = null, arcadePruneT = 0;
+function startArcade() {
+  mode = "main";
+  arcade = true;
+  for (const a of [tower, movers, sweepers, poppies, enemies]) a.length = 0;
+  arcadeGen = makeWorldGen(Infinity, { tower, movers, sweepers, poppies, enemies });
+  arcadeGen.extend(VIEW_H * 4);
+  resetWorld();
+  usePackedItems();
+  state = "playing";
+}
+const restartRun = () => (arcade ? startArcade() : startRun());
+function updateArcadeWorld(dt) {
+  arcadeGen.extend(camY + VIEW_H * 3);
+  arcadePruneT -= dt;
+  if (arcadePruneT > 0) return;
+  arcadePruneT = 2;
+  const below = camY - 900, keep = (arr, ok) => { const k = arr.filter(ok); arr.length = 0; arr.push(...k); };
+  for (const arr of [tower, movers, sweepers]) keep(arr, s => s.y >= below);
+  keep(poppies, f => f.y >= below);
+  keep(enemies, e => e.boss || e.dyn || e.hy >= below || e.y >= below);
+}
+
 function startRun() {
   mode = "main";
+  arcade = false;
   setWorld(MAIN_WORLD);
   resetWorld();
   if (startBiome > 0) placeAtBiome(Math.min(startBiome, bestBiome));
@@ -891,7 +971,7 @@ function startRun() {
 function respawnAtCheckpoint() {
   const L = checkpoint, p = player;
   Object.assign(p, { x: L.x + L.w / 2 - PLAYER_W / 2, y: L.y, vx: 0, vy: 0, onGround: true, standOn: L, landY: L.y,
-                     stun: 0, diving: false, dashTime: 0, jumping: false, invuln: 2 });
+                     stun: 0, diving: false, dashTime: 0, jumping: false, invuln: 2, dmgPct: 0 });
   camY = Math.max(CAM_MIN, L.y - VIEW_H * 0.42);
   for (const e of enemies) if (e.dyn) e.alive = false;
   if (boss.phase !== "none" && boss.phase !== "won") {      // a boss fight starts over from its gate
@@ -930,11 +1010,12 @@ function placeAtBiome(i) {
 function saveBestBiome(i) {
   if (i <= bestBiome) return;
   bestBiome = i;
-  try { localStorage.setItem("moonhop.bestBiome", String(i)); } catch (e) { /* just for this visit */ }
+  try { localStorage.setItem("moonhop.bestBiome16", String(i)); } catch (e) { /* just for this visit */ }
 }
 
 function showTitle() {
   mode = "main";
+  arcade = false;
   setWorld(MAIN_WORLD);
   resetWorld();
   state = "title";
@@ -1004,16 +1085,17 @@ const compareScores = (a, b) => (b.height - a.height) || (a.time - b.time);
 
 function cleanScores(arr) {
   if (!Array.isArray(arr)) return [];
-  return arr
-    .filter(s => s && typeof s.initials === "string" && typeof s.height === "number")
-    .sort(compareScores)
-    .slice(0, MAX_SCORES);
+  const ok = arr.filter(s => s && typeof s.initials === "string" && typeof s.height === "number")
+    .map(s => (s.v || s.arcade ? s : { ...s, height: s.moon ? MOON_METERS : s.height + MANTLE_M, v: 16 }));   // Round 16: the mantle added 200 m
+  const mainBoard = ok.filter(s => !s.arcade).sort(compareScores).slice(0, MAX_SCORES);
+  const arcadeBoard = ok.filter(s => s.arcade).sort(compareScores).slice(0, MAX_SCORES);
+  return [...mainBoard, ...arcadeBoard];
 }
 
 function mergeScores(a, b) {
   const seen = new Set(), out = [];
   for (const s of [...a, ...b]) {
-    const key = `${s.initials}|${s.height}|${s.time}|${!!s.moon}`;
+    const key = `${s.initials}|${s.height}|${s.time}|${!!s.moon}|${!!s.arcade}`;
     if (!seen.has(key)) { seen.add(key); out.push(s); }
   }
   return cleanScores(out);
@@ -1093,13 +1175,15 @@ if (SERVED) {
     .catch(() => {});
 }
 
+const board = (arc = arcade) => scores.filter(s => !!s.arcade === arc);   // the main board, or the arcade board
 function qualifies(r) {
-  return r.height > 0 && (scores.length < MAX_SCORES || compareScores(r, scores[MAX_SCORES - 1]) < 0);
+  const b = board();
+  return r.height > 0 && (b.length < MAX_SCORES || compareScores(r, b[MAX_SCORES - 1]) < 0);
 }
 
 function endRun(moon, forReal = false) {
   // Fell, but you've reached a checkpoint? You can go back to it instead of ending the climb.
-  if (!moon && !forReal && mode === "main" && checkpoint) {
+  if (!moon && !forReal && mode === "main" && checkpoint && !arcade) {
     result = { moon: false, height: Math.floor(maxHeightPx / PX_PER_M), time: Math.round(runTime * 10) / 10 };
     state = "over";
     overPhase = "checkpoint";
@@ -1125,11 +1209,11 @@ function endRun(moon, forReal = false) {
 }
 
 function saveEntry() {
-  const rec = { initials: entry.letters.join(""), height: result.height, moon: result.moon, time: result.time };
+  const rec = { initials: entry.letters.join(""), height: result.height, moon: result.moon, time: result.time, v: 16 };
+  if (arcade) rec.arcade = true;
   scores.push(rec);
-  scores.sort(compareScores);
-  scores = scores.slice(0, MAX_SCORES);
-  highlightIndex = scores.indexOf(rec);
+  scores = cleanScores(scores);
+  highlightIndex = board().indexOf(rec);
   storeScores();
   overPhase = "board";
   overTimer = 0.3;
@@ -1168,6 +1252,7 @@ function onKeyPress(e) {
     else if (c === "KeyC") openCredits();
     else if (c === "KeyS") openSandbox();
     else if (c === "KeyX") openExplore();
+    else if (c === "KeyA") startArcade();
     else if (c === "Digit3") toggle3D();
     else if (c === "KeyB" && bestBiome > 0) startBiome = (startBiome + 1) % (bestBiome + 1);   // choose a start biome
   } else if (state === "sandbox") {
@@ -1234,7 +1319,7 @@ function handleOverKey(e) {
       if (entry.pos < 2) entry.pos++;
     }
   } else {
-    if (c === "Space" || c === "Enter") startRun();
+    if (c === "Space" || c === "Enter") restartRun();
     else if (c === "Escape") showTitle();
   }
 }
@@ -1466,7 +1551,8 @@ function handleCharKey(e) {
 const rerollsLeft = () => st.rerolls - player.rerollsUsed;
 
 function randomCard(cat, exclude) {
-  const pool = UPGRADES[cat].filter(u => !taken.includes(u) && !exclude.includes(u) && (!u.needs || u.needs(st)));
+  const pool = UPGRADES[cat].filter(u => !taken.includes(u) && !exclude.includes(u) && (!u.needs || u.needs(st)) &&
+                                    !(arcade && (u.id === "rebound" || u.id === "safetyFlag")));   // arcade = one life
   return pool.length ? pick(pool) : null;
 }
 
@@ -1672,11 +1758,29 @@ function spawnFlyer(type, x, y, vx, vy, warn = 0) {
   return enemies[enemies.length - 1];
 }
 
+// Which hazards each place has (Round 16 made this a list so the new places can mix them)
+const HAZARDS = {
+  mantle: ["lava"], mountains: ["rocks"], sky: ["wind"], darksky: ["storm"], mars: ["wind"],
+  jupiter: ["wind", "storm"], saturn: ["rock"], sun: ["flare"], blackhole: ["rock"],
+  uranus: ["wind"], neptune: ["wind", "storm"], pluto: ["rock"], kuiper: ["comet"],
+  nebula: ["storm", "flare", "rock"], void: ["storm", "wind", "flare", "rock", "lava"],
+};
+let lavaT = 1.5;
 function updateSections(dt) {
   const p = player, px = p.x + PLAYER_W / 2, ws = worldScale();
-  const sec = SECTIONS[sectionAt(p.y / PX_PER_M)].id;
+  const sec = SECTIONS[sectionAt(p.y / PX_PER_M)].id, has = h => (HAZARDS[sec] || []).includes(h);
   const calm = boss.phase !== "none" && boss.phase !== "won";   // no surprises during a boss fight
+  const heat = 1 + Math.max(0, p.y / PX_PER_M - MOON_METERS) / 1500;   // arcade: it keeps getting busier
 
+  // Earth's mantle (Round 16): lava bursts rise up from below
+  if (has("lava") && !calm) {
+    lavaT -= dt * ws;
+    if (lavaT <= 0) {
+      lavaT = (1.8 + Math.random() * 1.2) / heat;
+      const f = spawnFlyer("flare", 30 + Math.random() * (VIEW_W - 60), camY - 20, (Math.random() - 0.5) * 40, 220 + Math.random() * 80);
+      f.tint = "255,90,30";
+    }
+  }
   // Upper Atmosphere: a warning flicker, then a lightning bolt straight down
   if (storm.warn > 0) {
     storm.warn -= dt * ws;
@@ -1687,12 +1791,12 @@ function updateSections(dt) {
       storm.hit = true;
       if (hitPlayer(px >= storm.x ? 1 : -1, 340, 280)) puff(px, p.y + 16, 12, 120, "255,240,120");
     }
-  } else if (sec === "darksky") {
+  } else if (has("storm")) {
     storm.t -= dt * ws;
     if (storm.t <= 0) {
       storm.x = clamp(px + (Math.random() - 0.5) * 180, 20, VIEW_W - 20);
       storm.warn = 0.9;
-      storm.t = 2.5 + Math.random() * 2;
+      storm.t = (2.5 + Math.random() * 2) / heat;
     }
   }
 
@@ -1704,25 +1808,26 @@ function updateSections(dt) {
     wind.timer -= dt;
     p.x = clamp(p.x + wind.dir * (p.onGround ? 70 : 140) * dt * ws, 0, VIEW_W - PLAYER_W);   // slides you along
     if (wind.timer <= 0) { wind.phase = "calm"; wind.t = 3 + Math.random() * 2.5; }
-  } else if (sec === "sky" || sec === "mars") {             // wind in the sky, dust storms on Mars
+  } else if (has("wind")) {                                 // wind in the sky, dust storms on Mars, planet storms
     wind.t -= dt;
     if (wind.t <= 0) { wind.phase = "warn"; wind.timer = 1.1; wind.dir = Math.random() < 0.5 ? -1 : 1; }
   }
 
   // The Sun: solar flares shoot across from the right (with a warning first)
-  if (sec === "sun" && !calm) {
+  if ((has("flare") || has("comet")) && !calm) {            // comets in the Kuiper Belt fly the same way
     flareT -= dt * ws;
     if (flareT <= 0) {
-      flareT = 2 + Math.random() * 1.3;
-      spawnFlyer("flare", VIEW_W + 20, p.y + 16 + (Math.random() - 0.3) * 260, -240, 0, 0.8);
+      flareT = (2 + Math.random() * 1.3) / heat;
+      const f = spawnFlyer("flare", VIEW_W + 20, p.y + 16 + (Math.random() - 0.3) * 260, -240, 0, 0.8);
+      if (has("comet")) f.tint = "143,208,255";
     }
   }
   // The Black Hole: asteroids drift down. The Mountains: rocks tumble down faster.
-  if ((sec === "blackhole" || sec === "mountains") && !calm) {
+  if ((has("rock") || has("rocks")) && !calm) {
     rockT -= dt * ws;
     if (rockT <= 0) {
-      const rocks = sec === "mountains";
-      rockT = (rocks ? 1.8 : 1.4) + Math.random() * 1.2;
+      const rocks = has("rocks");
+      rockT = ((rocks ? 1.8 : 1.4) + Math.random() * 1.2) / heat;
       const r = spawnFlyer("asteroid", 30 + Math.random() * (VIEW_W - 60), camY + VIEW_H + 30,
                            (Math.random() - 0.5) * (rocks ? 60 : 120), -(rocks ? 110 + Math.random() * 70 : 50 + Math.random() * 70));
       if (rocks) r.rock = true;
@@ -1774,12 +1879,12 @@ function updateBoss(dt) {
     boosts = st.boostMax;
     p.invuln = Math.max(p.invuln, 4);
     p.starTime = 4;
-    if (boss.def.final) boss.timer = 3;           // the final boss: you win the whole game!
+    if (boss.def.final && !arcade) boss.timer = 3;   // the final boss: you win the whole game! (arcade keeps going)
     else { pendingPicks++; boss.prize = true; }   // the prize: a free upgrade pick
   } else if (boss.phase === "won") {
     boss.timer -= dt;
     if (boss.timer <= 0) {
-      if (boss.def.final) { endRun(true); return; }
+      if (boss.def.final && !arcade) { endRun(true); return; }
       boss.phase = "none";
     }
   }
@@ -1811,7 +1916,7 @@ function hazardBox() {
 }
 
 // Something bumped you. Returns true if it actually knocked you.
-function hitPlayer(dirX, kx, ky, enemy = null) {
+function hitPlayer(dirX, kx, ky, enemy = null, dmg = null) {
   const p = player;
   if (p.domeTime > 0) {                                            // the dog's Safety Dome blocks everything
     if (enemy) enemy.pvx -= dirX * 260;
@@ -1842,10 +1947,16 @@ function hitPlayer(dirX, kx, ky, enemy = null) {
     floatText(cx, p.y + PLAYER_H + 20, "BLOCKED!", "#8fe3ff");
     return false;
   }
-  p.vx = dirX * kx * st.knockResist;
-  p.vy = ky * st.knockResist;
+  // DAMAGE %: each hit adds to it, and the higher it is, the farther you fly and the longer you spin
+  const add = dmg != null ? dmg : enemy ? (ENEMY_INFO[enemy.type].dmg || 11) : 11;
+  p.dmgPct = Math.min(999, p.dmgPct + add);
+  p.dmgShake = 0.4;
+  const launch = 1 + p.dmgPct / 60;
+  floatText(cx, p.y + PLAYER_H + 34, `+${add}%`, p.dmgPct >= 100 ? "#ff5a5a" : "#ffb347");
+  p.vx = dirX * kx * st.knockResist * launch;
+  p.vy = ky * st.knockResist * Math.min(2.2, 1 + p.dmgPct / 200);
   Object.assign(p, { onGround: false, standOn: null, coyote: 0, jumping: false, diving: false, dashTime: 0 });
-  p.stun = st.noStun ? 0 : STUN_TIME;
+  p.stun = st.noStun ? 0 : STUN_TIME * Math.min(3.5, 1 + p.dmgPct / 90);
   p.squash = 0.75;
   p.invuln = Math.max(HIT_GRACE, st.ghostTime);
   if (st.revenge) blastAround(cx, cy, 110, 2, 0, "255,120,120");   // Revenge Burst
@@ -1912,7 +2023,7 @@ function land(s, impact, wasGround) {
   p.diving = false;
   p.wallKicked = false;                                      // landing gives your Wall Kick back
   if (s.kind === "ledge" || s.kind === "ground") p.lastLedge = s;
-  if (s.kind === "ledge" && mode === "main" && (!checkpoint || s.y > checkpoint.y)) {   // a new checkpoint!
+  if (s.kind === "ledge" && mode === "main" && !arcade && (!checkpoint || s.y > checkpoint.y)) {   // a new checkpoint!
     checkpoint = s;
     ring(s.x + s.w / 2, s.y + 20, 50, "125,255,122");
     floatText(s.x + s.w / 2, s.y + 70, "CHECKPOINT!", "#7dff7a");
@@ -2170,6 +2281,7 @@ const moonletPos = () => ({
 
 function damageEnemy(e, amount) {
   if (!e.alive) return;
+  if (ENEMY_INFO[e.type].obstacle) { e.flash = 0.08; return; }     // obstacles can't be broken
   e.hp -= amount;
   e.flash = 0.12;
   floatText(e.x, e.y + e.r + 4, `-${amount}`, "#ffffff");
@@ -2346,6 +2458,11 @@ function moveEnemy(e, edt, px, py) {
     e.x += e.vx * edt;
     e.y += e.vy * edt;
     if (e.x < -60 || e.x > VIEW_W + 60 || e.y < camY - 150 || e.y > camY + VIEW_H + 100) e.alive = false;   // gone off screen
+  } else if (e.move === "orbit") {     // obstacles circle their platform (Round 16)
+    const a = e.ph + e.t * e.orbitSp;
+    e.x = e.hx + Math.cos(a) * e.orbitR;
+    e.y = e.hy + Math.sin(a) * e.orbitR;
+    e.pvx = e.pvy = 0;
   } else if (e.move === "patrol") {    // drifts back and forth
     ease(e.hx + e.amp * Math.sin(e.t * 2 * Math.PI / e.period + e.ph), e.hy + 8 * Math.sin(e.t * 1.7 + e.ph), 3);
   } else if (e.move === "zip") {       // zips all the way across the screen
@@ -2513,7 +2630,7 @@ function update(dt) {
     runTime += dt;
     if (timeSlow > 0) timeSlow -= dt;
     for (const k of ["timeCd", "blinkCd", "cloudCd", "invuln", "starTime", "spellTime", "domeTime",
-                     "fxFeather", "fxSpeed", "fxRapid", "powerTextCd"]) if (p[k] > 0) p[k] -= dt;
+                     "fxFeather", "fxSpeed", "fxRapid", "powerTextCd", "dmgShake"]) if (p[k] > 0) p[k] -= dt;
     for (const k in p.spellCds) if (p.spellCds[k] > 0) p.spellCds[k] -= dt * st.spellRate;
     if (st.shield && !p.shieldReady) { p.shieldTimer -= dt; if (p.shieldTimer <= 0) p.shieldReady = true; }
     if (st.guardian > 0) {                                   // Guardian Star relic: a free shield now and then
@@ -2556,7 +2673,7 @@ function update(dt) {
       sectionReached = si;
       sectionFlash = 3.5;
       newSpell = "";
-      if (mode === "main") saveBestBiome(si);   // you can start here next time
+      if (mode === "main" && !arcade) saveBestBiome(si);   // you can start here next time
       if (SPELLS[si] && !p.spells.includes(si)) {
         p.spells.push(si);
         p.spellSel = p.spells.length - 1;
@@ -2567,8 +2684,9 @@ function update(dt) {
     updateSections(dt);
     updateBoss(dt);
     if (mode === "main") updatePortal(dt);
+    if (arcade) updateArcadeWorld(dt);
 
-    const best = scores[0];
+    const best = board()[0];
     if (!passedRecord && best && !best.moon && Math.floor(maxHeightPx / PX_PER_M) > best.height) {
       passedRecord = true;
       recordFlash = 2.5;
@@ -2577,10 +2695,14 @@ function update(dt) {
 
     // Every 100 m: time to pick an upgrade
     const reached = Math.floor(maxHeightPx / (UPGRADE_EVERY_M * PX_PER_M));
-    while (milestonesDone < reached && (milestonesDone + 1) * UPGRADE_EVERY_M < MOON_METERS) {
+    while (milestonesDone < reached && ((milestonesDone + 1) * UPGRADE_EVERY_M < MOON_METERS || arcade)) {
       milestonesDone++;
       pendingPicks++;
       onMilestone();
+      if (p.dmgPct > 0) {                                      // every 100 m heals some damage
+        p.dmgPct = Math.max(0, p.dmgPct - 30);
+        floatText(p.x + PLAYER_W / 2, p.y + 80, "HEALED 30%", "#7dff7a");
+      }
     }
 
     if (state === "playing" && p.y + PLAYER_H < camY - 4) fellOff();   // you win by beating the Black Hole
@@ -2623,7 +2745,7 @@ function drawSky() {
 }
 
 function drawStars(t) {
-  const vis = clamp(((camY + VIEW_H / 2) / PX_PER_M - 820) / 80, 0, 1);    // stars come out high in the atmosphere
+  const vis = clamp(((camY + VIEW_H / 2) / PX_PER_M - 1020) / 80, 0, 1);    // stars come out high in the atmosphere
   if (vis <= 0) return;
   for (const s of stars) {
     const sy = (s.y + camY * s.d) % VIEW_H;
@@ -2635,13 +2757,14 @@ function drawStars(t) {
 // The goal: far away the Black Hole hangs small at the top of the sky, and it
 // grows as you climb toward it. (Underwater it's hidden by the sea.)
 function drawMoon(t) {
+  if (arcade && camY > MOON_Y) return;          // arcade: you climbed past it
   const HANG_Y = 110;
   const realY = toScreenY(MOON_Y + MOON_R);
   let cy, r;
   if (realY >= HANG_Y) { cy = realY; r = MOON_R; }
   else { cy = HANG_Y; r = MOON_R / (1 + (HANG_Y - realY) / 1400); }
   const cx = VIEW_W / 2;
-  const seen = clamp(((camY + VIEW_H / 2) / PX_PER_M - 100) / 60, 0, 1);
+  const seen = clamp(((camY + VIEW_H / 2) / PX_PER_M - 300) / 60, 0, 1);
   if (seen <= 0) return;
   ctx.save();
   ctx.globalAlpha = seen;
@@ -2668,7 +2791,7 @@ function drawMoon(t) {
 
 function drawClouds(t) {
   const m = camY / PX_PER_M;                 // clouds from the jungle up through the sky
-  const alpha = clamp((m - 100) / 40, 0, 1) * clamp(1 - (m - 840) / 50, 0, 1) * 0.9;
+  const alpha = clamp((m - 300) / 40, 0, 1) * clamp(1 - (m - 1040) / 50, 0, 1) * 0.9;
   if (alpha <= 0) return;
   ctx.fillStyle = `rgba(255,255,255,${alpha})`;
   for (const c of clouds) {
@@ -2822,6 +2945,15 @@ function drawBackItem(b, x, sy, t) {
       ctx.fillStyle = "rgba(70,60,55,0.8)";
       circle(x + 3 * s, sy - 2 * s, 3 * s);
       break;
+    case "ember": {                                  // glowing bits of lava floating up in the mantle
+      const glow = 0.6 + 0.4 * Math.sin(t * 3 + b.ph);
+      ctx.fillStyle = `rgba(255,${120 + 80 * glow | 0},40,${0.8 * glow})`;
+      circle(x, sy, 3.5 * s);
+      break;
+    }
+    case "jupiter": case "saturn": case "uranus": case "neptune": case "pluto":
+      drawPlanet(b.kind, sy, t);
+      break;
     case "earth":
       ctx.fillStyle = "#3f7fe0";
       circle(90, sy, 40);
@@ -2831,6 +2963,37 @@ function drawBackItem(b, x, sy, t) {
       ctx.fillStyle = "rgba(255,255,255,0.7)";
       ctx.fillRect(66, sy + 20, 30, 4);
       break;
+  }
+}
+
+// Big planets hanging in the sky (Round 16): striped bands, and rings for Saturn and Uranus.
+const PLANETS = {
+  jupiter: { x: 130, r: 120, bands: ["#d9a066", "#f2d3a8", "#b8743a", "#f0c890", "#c98a50"], spot: "#c0503a" },
+  saturn: { x: 330, r: 72, bands: ["#f2d68a", "#e0bc6a", "#f6e2a8"], ring: "rgba(240,220,170,0.85)" },
+  uranus: { x: 120, r: 64, bands: ["#a8f0f0", "#90e0e8"], ring: "rgba(200,250,250,0.6)", tilt: 1.4 },
+  neptune: { x: 350, r: 66, bands: ["#4a6cff", "#3a58d8", "#5a80ff"], spot: "#1a2a80" },
+  pluto: { x: 140, r: 34, bands: ["#e8d8c8", "#c8b098"], heart: true },
+};
+function drawPlanet(kind, sy, t) {
+  const P = PLANETS[kind], r = P.r, x = P.x;
+  const ringPath = () => { ctx.beginPath(); ctx.ellipse(x, sy, r * 1.9, r * 0.42, P.tilt || -0.25, 0, Math.PI * 2); };
+  if (P.ring) { ctx.strokeStyle = P.ring; ctx.lineWidth = r * 0.16; ringPath(); ctx.stroke(); }
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x, sy, r, 0, Math.PI * 2); ctx.clip();
+  const bh = (r * 2) / (P.bands.length * 2);
+  for (let k = 0; k < P.bands.length * 2; k++) {
+    ctx.fillStyle = P.bands[k % P.bands.length];
+    ctx.fillRect(x - r, sy - r + k * bh, r * 2, bh + 1);
+  }
+  if (P.spot) { ctx.fillStyle = P.spot; ctx.beginPath(); ctx.ellipse(x + r * 0.35, sy + r * 0.3, r * 0.22, r * 0.12, 0, 0, Math.PI * 2); ctx.fill(); }
+  if (P.heart) { ctx.fillStyle = "#fff4e6"; ctx.beginPath(); ctx.arc(x - 6, sy + 4, 9, 0, Math.PI * 2); ctx.arc(x + 6, sy + 4, 9, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = "rgba(0,0,0,0.3)";                         // the night side
+  ctx.beginPath(); ctx.arc(x + r * 0.45, sy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  if (P.ring) {                                              // the front half of the ring goes over the planet
+    ctx.save(); ctx.beginPath(); ctx.rect(x - r * 2, sy, r * 4, r * 2); ctx.clip();
+    ctx.strokeStyle = P.ring; ctx.lineWidth = r * 0.16; ringPath(); ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -2871,6 +3034,18 @@ function drawLandscapes(t) {
     ctx.save();
     ctx.globalAlpha = w;
     switch (sec.id) {
+      case "mantle": {                                   // glowing lava far below, dark rock walls
+        const g = ctx.createLinearGradient(0, base - 40, 0, base + 120);
+        g.addColorStop(0, "rgba(255,120,30,0)");
+        g.addColorStop(1, "rgba(255,90,20,0.9)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, base - 40, VIEW_W, VIEW_H);
+        drawRidge(base - 10, R.far, 120, "rgba(60,22,18,0.95)");
+        drawRidge(base + 60, R.near, 80, "rgba(35,14,12,0.97)", true);
+        ctx.fillStyle = `rgba(255,${150 + 60 * Math.sin(t * 2) | 0},40,0.9)`;      // lava cracks
+        for (let k = 0; k < 5; k++) ctx.fillRect(20 + k * 100, base + 90 + (k % 2) * 20, 50, 4);
+        break;
+      }
       case "water": {
         ctx.fillStyle = "rgba(200,240,255,0.07)";            // sunbeams from the surface
         for (let k = 0; k < 4; k++) {
@@ -3098,9 +3273,9 @@ function drawConfetti() {
 }
 
 function drawRecordLines() {
-  const colors = ["#ffd447", "#d7dde8", "#e39a5a"];
-  for (let i = 0; i < Math.min(3, scores.length); i++) {
-    const s = scores[i];
+  const colors = ["#ffd447", "#d7dde8", "#e39a5a"], list = board();
+  for (let i = 0; i < Math.min(3, list.length); i++) {
+    const s = list[i];
     if (s.moon) continue;
     const sy = toScreenY(s.height * PX_PER_M);
     if (sy < -20 || sy > VIEW_H + 20) continue;
@@ -3187,17 +3362,15 @@ function drawVignette() {                    // darker edges, like a camera lens
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 }
 
-function drawGround(sy) {                                    // the sandy sea floor
-  ctx.fillStyle = "#b89a62";
+function drawGround(sy) {                                    // the floor of Earth's mantle: dark rock over lava
+  ctx.fillStyle = "#3a1a14";
   ctx.fillRect(0, sy, VIEW_W, VIEW_H - sy + 2);
-  ctx.fillStyle = "#e6cf94";
+  ctx.fillStyle = "#5a2a1e";
   ctx.fillRect(0, sy, VIEW_W, 10);
-  ctx.fillStyle = "#cdb47a";
-  ctx.fillRect(0, sy + 10, VIEW_W, 3);
-  ctx.fillStyle = "#f0e0b0";                                 // a few shells
-  for (const x of [40, 170, 300, 420]) { ctx.beginPath(); ctx.arc(x, sy + 22, 4, Math.PI, 0); ctx.fill(); }
-  if (VIEW3D && sy > vp.y) {                                 // 3D: the sea floor stretches back
-    quad([[0, sy], [VIEW_W, sy], backPt(VIEW_W, sy), backPt(0, sy)], "#d9c288");
+  ctx.fillStyle = "#ff7a2a";                                 // glowing cracks
+  for (const x of [30, 150, 280, 400]) ctx.fillRect(x, sy + 14, 36, 3);
+  if (VIEW3D && sy > vp.y) {                                 // 3D: the rock floor stretches back
+    quad([[0, sy], [VIEW_W, sy], backPt(VIEW_W, sy), backPt(0, sy)], "#4a2218");
   }
 }
 
@@ -3688,6 +3861,19 @@ function drawEnemy(e, t) {
     ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#ffffff";
     ctx.beginPath(); ctx.arc(-2, -2, r * 0.45, 0, Math.PI * 2); ctx.fill();
+  } else if (ENEMY_INFO[e.type].art === "spike") {   // obstacles: a spinning spiky ball
+    ctx.rotate(e.t * 3);
+    ctx.fillStyle = "#5a6178";
+    ctx.beginPath();
+    for (let k = 0; k < 16; k++) {
+      const a = k * Math.PI / 8, rad = k % 2 ? r * 0.7 : r * 1.35;
+      ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = e.flash > 0 ? "#ffffff" : ENEMY_INFO[e.type].fill;
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.75, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ff5a5a";
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.25, 0, Math.PI * 2); ctx.fill();
   } else if (ENEMY_INFO[e.type].art === "cloud") {   // grumpy clouds, rock bats, snow puffs
     ctx.fillStyle = ENEMY_INFO[e.type].fill;
     for (const [cx, cy, cr] of [[-r * 0.55, 3, r * 0.6], [r * 0.55, 3, r * 0.6], [0, -r * 0.25, r * 0.75], [0, 4, r * 0.7]]) {
@@ -4187,7 +4373,18 @@ function drawAbilityHUD() {
   lines.forEach(([str, color], i) => txt(str, 12, VIEW_H - 18 - (lines.length - 1 - i) * 14, 7, color));
 }
 
+// DAMAGE % (Round 16), bottom right. White when you're fresh, red when one more hit could launch you.
+function drawDamageMeter() {
+  const p = player, pct = Math.floor(p.dmgPct || 0);
+  const col = pct >= 150 ? "#ff3b3b" : pct >= 100 ? "#ff6a3a" : pct >= 50 ? "#ffb347" : pct >= 20 ? "#ffe680" : "#ffffff";
+  const shake = p.dmgShake > 0 ? (Math.random() - 0.5) * 10 * p.dmgShake : 0;
+  const x = VIEW_W - 26, y = VIEW_H - 96;
+  txt("DAMAGE", x, y, 8, "#c8d3ff", "right");
+  txt(`${pct}%`, x + shake, y + 14 + shake, 26, col, "right");
+}
+
 function drawHUD() {
+  drawDamageMeter();
   const p = player;
   txt("SCORE", 12, 12, 8, "#c8d3ff");
   txt(`${Math.floor(maxHeightPx / PX_PER_M)} m`, 12, 26, 18, "#ffffff");
@@ -4223,7 +4420,8 @@ function drawHUD() {
     y += 14;
   }
   y += 16;
-  if (p.y >= SPACE_Y) { txt("LOW GRAVITY", 12, y, 8, "#8fe3ff"); y += 16; }
+  if (sec.gravity < 0.9 && p.y >= SPACE_Y) { txt("LOW GRAVITY", 12, y, 8, "#8fe3ff"); y += 16; }
+  else if (sec.gravity > 1) { txt("HEAVY GRAVITY", 12, y, 8, "#ffb347"); y += 16; }
   if (timeSlow > 0) txt("SLOW-MO", 12, y, 8, "#8fe3ff");
   if (mode === "main" && wind.phase !== "calm") {
     txt(wind.dir > 0 ? "WIND >>>" : "<<< WIND", VIEW_W / 2, 250, 12, wind.phase === "warn" ? "#ffd447" : "#ffffff", "center");
@@ -4237,8 +4435,9 @@ function drawHUD() {
     return;
   }
 
-  const hi = scores[0];
-  txt("HI", VIEW_W - 12, 12, 8, "#ffd447", "right");
+  const hi = board()[0];
+  txt(arcade ? "ARCADE HI" : "HI", VIEW_W - 12, 12, 8, "#ffd447", "right");
+  if (arcade) txt("1 LIFE!", VIEW_W - 12, 44, 8, "#ff8a7a", "right");
   txt(hi ? `${hi.initials} ${hi.moon ? "WIN!" : hi.height + " m"}` : "---", VIEW_W - 12, 26, 12, "#ffffff", "right");
 
   // Progress bar: ground at the bottom, Moon at the top
@@ -4305,10 +4504,10 @@ function drawHUD() {
   }
 }
 
-function drawBoard(cx, y, highlight, t) {
+function drawBoard(cx, y, highlight, t, list = board()) {
   const colors = ["#ffd447", "#d7dde8", "#e39a5a"];
   for (let i = 0; i < MAX_SCORES; i++) {
-    const s = scores[i];
+    const s = list[i];
     const rank = String(i + 1).padStart(2, " ") + ".";
     const right = s ? (s.moon ? "WIN! " + fmtTime(s.time) : (s.height + " m").padStart(9)) : "".padStart(9);
     const line = `${rank} ${s ? s.initials : "---"}  ${right}`;
@@ -4326,7 +4525,7 @@ function drawTitle(t) {
   const cx = VIEW_W / 2;
   panel(28, 28, VIEW_W - 56, 572);
   txt("MOON HOP", cx, 54, 34, "#fff3b0", "center");
-  txt("Climb from the sea to the black hole!", cx, 102, 9, "#c8d3ff", "center");
+  txt("Climb from Earth's mantle to the black hole!", cx, 102, 9, "#c8d3ff", "center");
   if (IOS_BROWSER) txt("FULL SCREEN: SHARE > ADD TO HOME SCREEN", cx, 8, 7, "#ffd447", "center");
   const rows = IS_TOUCH
     ? [["< >", "MOVE"], ["JUMP", "JUMP"], ["HOLD JUMP", "JUMP HIGHER"], ["SHOOT", "SHOOT"], ["SPELL", "DOG SPELL"],
@@ -4352,10 +4551,12 @@ function drawTitle(t) {
   } else {
     txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
   }
-  txt("TOP CLIMBERS", cx, 266, 12, "#ffd447", "center");
-  drawBoard(cx, 292, -1, t);
+  const showArc = board(true).length > 0 && Math.floor(t / 5) % 2 === 1;     // the title takes turns showing both boards
+  txt(showArc ? "ARCADE TOP 10" : "TOP CLIMBERS", cx, 266, 12, showArc ? "#ff8a7a" : "#ffd447", "center");
+  drawBoard(cx, 292, -1, t, board(showArc));
   if (USE_BUTTONS()) {
-    uiButton(IS_TOUCH ? "TAP TO PLAY" : "CLICK TO PLAY", cx - 110, 498, 220, 36, startRun, "#ffffff", 12);
+    uiButton("PLAY", cx - 206, 498, 200, 36, startRun, "#ffffff", 12);
+    uiButton("ARCADE: 1 LIFE", cx + 6, 498, 200, 36, startArcade, "#ff8a7a", 9);
     uiButton("SANDBOX", cx - 206, 540, 96, 28, openSandbox, "#7dff7a", 8);
     uiButton("EXPLORE", cx - 102, 540, 96, 28, openExplore, "#5ad1ff", 8);
     uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx + 2, 540, 96, 28, toggle3D, "#ffd447", 8);
@@ -4363,8 +4564,9 @@ function drawTitle(t) {
     ctx.save();
     ctx.translate(0, 18);                    // the save notice goes below the buttons
   } else {
-    if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 506, 13, "#ffffff", "center");
-    txt(`S = SANDBOX  X = EXPLORE  3 = 3D: ${VIEW3D ? "ON" : "OFF"}  C = CREDITS`, cx, 534, 7, "#c8d3ff", "center");
+    if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 500, 13, "#ffffff", "center");
+    txt("A = ARCADE: 1 LIFE, IT NEVER ENDS!", cx, 520, 8, "#ff8a7a", "center");
+    txt(`S = SANDBOX  X = EXPLORE  3 = 3D: ${VIEW3D ? "ON" : "OFF"}  C = CREDITS`, cx, 538, 7, "#c8d3ff", "center");
   }
   drawSaveNotice(cx);
   if (USE_BUTTONS()) ctx.restore();
@@ -4580,10 +4782,10 @@ function drawOver(t) {
       txt("ENTER = OK", cx, 424, 8, "#c8d3ff", "center");
     }
   } else {
-    txt("TOP CLIMBERS", cx, 222, 12, "#ffd447", "center");
+    txt(arcade ? "ARCADE TOP 10" : "TOP CLIMBERS", cx, 222, 12, arcade ? "#ff8a7a" : "#ffd447", "center");
     drawBoard(cx, 250, highlightIndex, t);
     if (overTimer <= 0 && USE_BUTTONS()) {
-      uiButton("PLAY AGAIN", cx - 150, 470, 140, 36, startRun, "#ffffff", 9);
+      uiButton("PLAY AGAIN", cx - 150, 470, 140, 36, restartRun, "#ffffff", 9);
       uiButton("TITLE", cx + 10, 470, 140, 36, showTitle, "#c8d3ff", 9);
     } else if (overTimer <= 0) {
       txt("SPACE = PLAY AGAIN", cx, 474, 10, "#ffffff", "center");

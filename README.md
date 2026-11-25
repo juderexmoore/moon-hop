@@ -23,6 +23,12 @@ Works on computers, iPads and iPhones (on-screen buttons appear on touch screens
 **Mouse:** the climber runs toward the mouse. Left click jumps (hold to jump higher), right click shoots,
 middle click casts the dog's spell, and the wheel switches spells. Menus have buttons you can click.
 
+**Arcade mode (A on the title screen):** one life, no checkpoints, and it never ends. Past the Black Hole you
+climb on through Uranus, Neptune, Pluto, the Kuiper Belt and a nebula into the Endless Void. It has its own top 10.
+
+**Damage %:** every hit adds to your damage meter (bottom right). The higher it is, the farther hits knock you,
+so watch out at 100%+. Every 100 m heals 30%.
+
 **Explore mode (X on the title screen):** walk around a 3D world (arrows or WASD, F shoots, Space talks, M map).
 Do quests for the people with a **!** to earn coins, then spend them at Bolt's Shop on gear for exploring
 or on power-ups for your next climb. Coins and gear save in your browser.
