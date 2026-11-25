@@ -80,6 +80,7 @@ const CREDITS = [
   { round: 14, who: "Daddy", what: "Portals! Jump into one for 1 of 10 mini-games. Win and get a power-up that stays (and stacks) until you fall. Plus mouse controls." },
   { round: 15, who: "G.", what: "Explore mode! Walk around a 3D world with Moon Base, the Frosty Peaks, the Jungle, Sunny Beach and the Crater Fields. Do quests for coins and spend them at Bolt's Shop on gear and power-ups for your next climb." },
   { round: 16, who: "J.", what: "Earth's mantle under the sea, Jupiter and Saturn, ARCADE mode (1 life, never ends, past Uranus, Neptune and Pluto into the Endless Void), a DAMAGE % meter where knockback grows, spiky obstacles, more enemies, and chunkier pixels." },
+  { round: 17, who: "Mommy", what: "Side quests! Gold portals open side-scrolling levels in 10 worlds, starting in a 1700s Scottish castle. Beat each boss to free a caged pet (first up: Molly, a black dachshund + chihuahua), then bring one pet on your climb for its special power. Plus the PETS menu, starring Beatrice." },
 ];
 
 // ---------- Tuning ----------
@@ -941,6 +942,7 @@ function startArcade() {
   arcadeGen.extend(VIEW_H * 4);
   resetWorld();
   usePackedItems();
+  petStartRun();
   state = "playing";
 }
 const restartRun = () => (arcade ? startArcade() : startRun());
@@ -961,7 +963,8 @@ function startRun() {
   setWorld(MAIN_WORLD);
   resetWorld();
   if (startBiome > 0) placeAtBiome(Math.min(startBiome, bestBiome));
-  usePackedItems();                                     // power-ups bought in the explore shop (Round 15)
+  usePackedItems();
+  petStartRun();                                        // your pet comes along (Round 17)                                     // power-ups bought in the explore shop (Round 15)
   state = "playing";
 }
 
@@ -1243,6 +1246,7 @@ window.addEventListener("blur", () => {
   for (const k in keys) keys[k] = false;
   if (state === "playing") state = "paused";
   if (state === "explore" && !ex.menu) ex.menu = "pause";
+  if (state === "sidequest" && sq && sq.phase !== "result") sq.paused = true;
 });
 
 function onKeyPress(e) {
@@ -1253,6 +1257,7 @@ function onKeyPress(e) {
     else if (c === "KeyS") openSandbox();
     else if (c === "KeyX") openExplore();
     else if (c === "KeyA") startArcade();
+    else if (c === "KeyP") openPets();
     else if (c === "Digit3") toggle3D();
     else if (c === "KeyB" && bestBiome > 0) startBiome = (startBiome + 1) % (bestBiome + 1);   // choose a start biome
   } else if (state === "sandbox") {
@@ -1284,6 +1289,10 @@ function onKeyPress(e) {
     minigameKey(c);
   } else if (state === "explore") {
     exploreKey(e);
+  } else if (state === "sidequest") {
+    sideQuestKey(c);
+  } else if (state === "pets") {
+    petsKey(c);
   }
   if (/^(Arrow|Key[ADW]$)/.test(c)) mouseSteer = false;           // keyboard steering wins over the mouse
 }
@@ -1478,6 +1487,13 @@ canvas.addEventListener("pointerdown", ev => {
   for (let i = uiButtons.length - 1; i >= 0; i--) {
     const b = uiButtons[i];
     if (m.x >= b.x && m.x <= b.x + b.w && m.y >= b.y && m.y <= b.y + b.h) { b.action(m); return; }
+  }
+  if (state === "sidequest" && isMouse && sq && !sq.paused) {   // side quests: left click jumps, right click shoots
+    try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* fine */ }
+    mouseSteer = true;
+    if (ev.button === 0) { keys.MouseL = true; sideQuestKey("Space"); }
+    else if (ev.button === 2) keys.MouseR = true;
+    return;
   }
   if (state === "explore" && isMouse && !ex.menu) {        // mouse exploring: hold left to walk, right to shoot
     try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* fine */ }
@@ -1948,7 +1964,8 @@ function hitPlayer(dirX, kx, ky, enemy = null, dmg = null) {
     return false;
   }
   // DAMAGE %: each hit adds to it, and the higher it is, the farther you fly and the longer you spin
-  const add = dmg != null ? dmg : enemy ? (ENEMY_INFO[enemy.type].dmg || 11) : 11;
+  let add = dmg != null ? dmg : enemy ? (ENEMY_INFO[enemy.type].dmg || 11) : 11;
+  if (activePet() === "shelly") add = Math.ceil(add / 2);       // Shelly's SHELL GUARD
   p.dmgPct = Math.min(999, p.dmgPct + add);
   p.dmgShake = 0.4;
   const launch = 1 + p.dmgPct / 60;
@@ -2625,6 +2642,7 @@ function fellOff() {
 function update(dt) {
   if (state === "minigame") { updateMinigame(dt); return; }
   if (state === "explore") { updateExplore(dt); return; }
+  if (state === "sidequest") { if (sq) updateSideQuest(dt); return; }
   if (state === "playing") {
     const p = player;
     runTime += dt;
@@ -2644,6 +2662,7 @@ function update(dt) {
     updateTempPlats(dt);
     updatePlayer(dt);
     updateDog(dt);
+    updatePet(dt);
     checkSweepers();
     updateBlaster(dt);
     updateEnemies(dt);
@@ -4385,6 +4404,7 @@ function drawDamageMeter() {
 
 function drawHUD() {
   drawDamageMeter();
+  drawPetHUD();
   const p = player;
   txt("SCORE", 12, 12, 8, "#c8d3ff");
   txt(`${Math.floor(maxHeightPx / PX_PER_M)} m`, 12, 26, 18, "#ffffff");
@@ -4551,22 +4571,25 @@ function drawTitle(t) {
   } else {
     txt("EVERY 100 m: PICK AN UPGRADE!", cx, 240, 9, "#ffd447", "center");
   }
+  const pet = activePet();
+  txt(pet ? `PET ON YOUR CLIMB: ${PETS.find(p => p.id === pet).name}` : "FREE PETS IN GOLD SIDE QUEST PORTALS!", cx, 254, 7, "#ff8fd0", "center");
   const showArc = board(true).length > 0 && Math.floor(t / 5) % 2 === 1;     // the title takes turns showing both boards
   txt(showArc ? "ARCADE TOP 10" : "TOP CLIMBERS", cx, 266, 12, showArc ? "#ff8a7a" : "#ffd447", "center");
   drawBoard(cx, 292, -1, t, board(showArc));
   if (USE_BUTTONS()) {
     uiButton("PLAY", cx - 206, 498, 200, 36, startRun, "#ffffff", 12);
     uiButton("ARCADE: 1 LIFE", cx + 6, 498, 200, 36, startArcade, "#ff8a7a", 9);
-    uiButton("SANDBOX", cx - 206, 540, 96, 28, openSandbox, "#7dff7a", 8);
-    uiButton("EXPLORE", cx - 102, 540, 96, 28, openExplore, "#5ad1ff", 8);
-    uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx + 2, 540, 96, 28, toggle3D, "#ffd447", 8);
-    uiButton("CREDITS", cx + 106, 540, 96, 28, openCredits, "#c8d3ff", 8);
+    uiButton("SANDBOX", cx - 206, 540, 78, 28, openSandbox, "#7dff7a", 7);
+    uiButton("EXPLORE", cx - 123, 540, 78, 28, openExplore, "#5ad1ff", 7);
+    uiButton("PETS", cx - 39, 540, 78, 28, openPets, "#ff8fd0", 7);
+    uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx + 45, 540, 78, 28, toggle3D, "#ffd447", 7);
+    uiButton("CREDITS", cx + 128, 540, 78, 28, openCredits, "#c8d3ff", 7);
     ctx.save();
     ctx.translate(0, 18);                    // the save notice goes below the buttons
   } else {
     if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 500, 13, "#ffffff", "center");
     txt("A = ARCADE: 1 LIFE, IT NEVER ENDS!", cx, 520, 8, "#ff8a7a", "center");
-    txt(`S = SANDBOX  X = EXPLORE  3 = 3D: ${VIEW3D ? "ON" : "OFF"}  C = CREDITS`, cx, 538, 7, "#c8d3ff", "center");
+    txt(`S SANDBOX  X EXPLORE  P PETS  3 3D: ${VIEW3D ? "ON" : "OFF"}  C CREDITS`, cx, 538, 7, "#c8d3ff", "center");
   }
   drawSaveNotice(cx);
   if (USE_BUTTONS()) ctx.restore();
@@ -5019,6 +5042,7 @@ function render(t) {
   wctx.setTransform(1 / PIXEL, 0, 0, 1 / PIXEL, 0, 0);
   if (state === "minigame" && mg) mg.game.draw(mg, t);        // a mini-game takes over the whole screen
   else if (state === "explore") drawExplore(t);                // the 3D explore world (Round 15)
+  else if (state === "sidequest" && sq) drawSideQuest(t);      // a side quest (Round 17)
   else drawWorld(t);
 
   // 2) Blow it up with sharp pixel edges, then put the words on top
@@ -5048,6 +5072,8 @@ function render(t) {
   else if (state === "over") drawOver(t);
   else if (state === "minigame" && mg) drawMinigameHUD(t);
   else if (state === "explore") drawExploreHUD(t);
+  else if (state === "sidequest" && sq) drawSideQuestHUD(t);
+  else if (state === "pets") drawPets(t);
 }
 
 const inRunState = () => state === "playing" || state === "paused" || state === "choose" || state === "over";
@@ -5079,6 +5105,7 @@ function drawWorld(t) {
   drawEffects();
   if (VIEW3D) drawPlayerShadow();
   drawDog(t);
+  drawClimbPet(t);
   drawPlayer(t);
   drawSpellCloud(t);
   drawWeather(t);
@@ -5629,7 +5656,9 @@ function updatePortal(dt) {
     portal.life -= dt;
     if (portal.life <= 0) { portal = null; return; }
     const px = portal.plat.x + portal.plat.w / 2, py = portal.plat.y + 26;
-    if (Math.hypot(p.x + PLAYER_W / 2 - px, p.y + PLAYER_H / 2 - py) < 26) startMinigame();
+    if (Math.hypot(p.x + PLAYER_W / 2 - px, p.y + PLAYER_H / 2 - py) < 26) {
+      if (portal.kind === "quest") startSideQuest(nextQuestIndex()); else startMinigame();
+    }
     return;
   }
   portalT -= dt;
@@ -5638,26 +5667,28 @@ function updatePortal(dt) {
                                   s.y > p.y + 40 && s.y < camY + VIEW_H - 140 && s.w >= 40);
   if (!spots.length) { portalT = 2; return; }
   const plat = pick(spots);
-  portal = { plat, life: PORTAL.life };
+  const quest = Math.random() < 0.4;                    // Round 17: gold portals open a side quest
+  portal = { plat, life: PORTAL.life + (quest ? 6 : 0), kind: quest ? "quest" : "game" };
   portalT = randR(PORTAL.gapMin, PORTAL.gapMax);
-  floatText(plat.x + plat.w / 2, plat.y + 70, "A PORTAL APPEARED!", "#c39bff");
+  floatText(plat.x + plat.w / 2, plat.y + 70, quest ? "A GOLD SIDE QUEST PORTAL!" : "A PORTAL APPEARED!", quest ? "#ffd447" : "#c39bff");
 }
 
 function drawPortal(t) {
   if (!portal) return;
   const x = portal.plat.x + portal.plat.w / 2, y = toScreenY(portal.plat.y) - 26;
   if (portal.life < 3 && Math.floor(t * 8) % 2) return;            // blinks when it's about to close
+  const gold = portal.kind === "quest";
   const glow = ctx.createRadialGradient(x, y, 4, x, y, 40);
-  glow.addColorStop(0, "rgba(200,140,255,0.8)");
-  glow.addColorStop(1, "rgba(80,40,200,0)");
+  glow.addColorStop(0, gold ? "rgba(255,212,71,0.85)" : "rgba(200,140,255,0.8)");
+  glow.addColorStop(1, gold ? "rgba(255,140,20,0)" : "rgba(80,40,200,0)");
   ctx.fillStyle = glow;
   ctx.beginPath(); ctx.arc(x, y, 40, 0, Math.PI * 2); ctx.fill();
   for (let k = 0; k < 3; k++) {
-    ctx.strokeStyle = ["#c39bff", "#5ad1ff", "#ffffff"][k];
+    ctx.strokeStyle = (gold ? ["#ffd447", "#ff9f40", "#ffffff"] : ["#c39bff", "#5ad1ff", "#ffffff"])[k];
     ctx.lineWidth = 3 - k;
     ctx.beginPath(); ctx.ellipse(x, y, 16 - k * 4, 22 - k * 5, t * (2 + k), 0, Math.PI * 2); ctx.stroke();
   }
-  txt("?", x, y - 50, 10, "#ffffff", "center");
+  txt(gold ? "SIDE QUEST!" : "?", x, y - 50, gold ? 8 : 10, gold ? "#ffd447" : "#ffffff", "center");
 }
 
 // ---------- Playing a mini-game ----------
@@ -6741,6 +6772,1052 @@ function exDrawPause() {
 }
 
 // =====================================================================
+//  SIDE QUESTS AND PETS (Round 17, Mommy)
+//  Gold portals in the climb open a SIDE QUEST: a side-scrolling level in one of 10 worlds.
+//  At the end a boss guards a pet in a cage. Beat the boss and the pet is free! Freed pets
+//  can come along on a climb (pick one in the PETS menu), and each has a special power.
+// =====================================================================
+const SQ_GY = 560;                                     // the ground line in side quests
+const SQ_WORLDS = [
+  { name: "1700s SCOTTISH CASTLE", sky: ["#3a3a6a", "#d8957a"], far: "#4a5a4a", prop: "tower", sun: ["#ffe0a0", 380, 120, 30],
+    ground: ["#8a8a95", "#5a5a66", "#44444f"], pattern: "brick", walker: ["#9aa3b8", "#c0392b", "helmet"], flyer: ["#3a2a4a", "#5a3a6a"],
+    boss: { name: "THE BAGPIPE KNIGHT", look: "knight", hp: 12, moves: ["charge", "shoot"], shot: "#c39bff" } },
+  { name: "PYRAMID OF THE SANDS", sky: ["#ffa040", "#ffe8a8"], far: "#e0b070", prop: "pyramid", sun: ["#fff3b0", 360, 110, 40],
+    ground: ["#e8c27a", "#c89a5a", "#a87a3a"], pattern: "brick", walker: ["#2a6a5a", "#ffd447", "none"], flyer: ["#5a3a2a", "#8a6a4a"],
+    boss: { name: "THE MUMMY PHARAOH", look: "mummy", hp: 14, moves: ["shoot", "leap"], shot: "#ffd447" } },
+  { name: "PIRATE SHIP COVE", sky: ["#5ab0ff", "#c8ecff"], far: "#2a6ab0", prop: "mast", sun: ["#fff3b0", 90, 100, 32],
+    ground: ["#a0703a", "#6a4520", "#4a2f15"], pattern: "plank", walker: ["#ff5a3a", "#ffd0c0", "claws"], flyer: ["#ffffff", "#c8d3ff"],
+    boss: { name: "CAPTAIN BLACKBEAK", look: "pirate", hp: 16, moves: ["charge", "rain"], shot: "#3a3a44" } },
+  { name: "HAUNTED MANSION", sky: ["#140c28", "#4a2a6a"], far: "#2a1a3a", prop: "deadtree", sun: ["#f0f0d0", 90, 110, 34],
+    ground: ["#5a4a5a", "#3a2a3a", "#2a1a2a"], pattern: "plank", walker: ["#f0f0e0", "#2a2a2a", "none"], flyer: ["rgba(230,230,255,0.85)", "#c8c8ff"],
+    boss: { name: "THE GHOST KING", look: "ghost", hp: 16, moves: ["shoot", "rain", "charge"], shot: "#8fe3ff" } },
+  { name: "SUNKEN ATLANTIS", sky: ["#0a3a6a", "#2a8ab0"], far: "#1a5a7a", prop: "column", sun: null, grav: 0.62,
+    ground: ["#d8c8a0", "#a89870", "#887850"], pattern: "brick", walker: ["#ff7a5a", "#ffd0c0", "claws"], flyer: ["rgba(255,140,200,0.85)", "#ffc0e0"],
+    boss: { name: "THE KRAKEN", look: "kraken", hp: 18, moves: ["shoot", "rain"], shot: "#2a2040" } },
+  { name: "WILD WEST TOWN", sky: ["#ff8a5a", "#ffd8a0"], far: "#c86a3a", prop: "cactus", sun: ["#fff0a0", 380, 140, 36],
+    ground: ["#d8a060", "#a87038", "#885020"], pattern: "plain", walker: ["#b8945a", "#8a6a3a", "cowboy"], flyer: ["#5a3a2a", "#8a6a4a"],
+    boss: { name: "BANDIT BULL", look: "bull", hp: 18, moves: ["charge", "leap", "charge"], shot: "#5a3a2a" } },
+  { name: "CANDY KINGDOM", sky: ["#ff9fd0", "#fff0f8"], far: "#ffc0e0", prop: "lollipop", sun: ["#ffffff", 380, 110, 30],
+    ground: ["#ff6ab0", "#c84a8a", "#ffffff"], pattern: "candy", walker: ["#7dff7a", "#ffffff", "none"], flyer: ["#ffd0f0", "#ffffff"],
+    boss: { name: "THE GUMMY GIANT", look: "gummy", hp: 20, moves: ["leap", "shoot", "leap"], shot: "#ffd447" } },
+  { name: "ARCTIC ICE CAVES", sky: ["#8fc0e8", "#e6f4ff"], far: "#c8e0f0", prop: "iceberg", sun: ["#ffffff", 90, 110, 28], slippery: true,
+    ground: ["#e6f4ff", "#9ac8e8", "#7aa8c8"], pattern: "ice", walker: ["#ffffff", "#ff8a3a", "hat"], flyer: ["#f0f0f0", "#c8c8c8"],
+    boss: { name: "THE FROST YETI", look: "yeti", hp: 22, moves: ["leap", "rain", "charge"], shot: "#bfe8ff" } },
+  { name: "DRAGON VOLCANO", sky: ["#3a0a0a", "#b04a1a"], far: "#2a0a0a", prop: "volcano", sun: null, lava: true,
+    ground: ["#4a2a2a", "#2a1414", "#ff5a1a"], pattern: "plain", walker: ["#ff5a1a", "#ffd447", "horns"], flyer: ["#3a2020", "#ff5a1a"],
+    boss: { name: "THE LAVA DRAGON", look: "dragon", hp: 24, moves: ["shoot", "leap", "rain", "charge"], shot: "#ff7a2a" } },
+  { name: "ALIEN SPACE STATION", sky: ["#05051a", "#1a1a40"], far: "#2a2a50", prop: "antenna", sun: ["#7dff7a", 380, 120, 44], grav: 0.62,
+    ground: ["#9aa3b8", "#59617a", "#3a4058"], pattern: "panel", walker: ["#c8d0e0", "#ff5a5a", "antenna"], flyer: ["#7dff7a", "#c8ffc8"],
+    boss: { name: "ROBO OVERLORD", look: "robot", hp: 26, moves: ["shoot", "charge", "rain", "leap"], shot: "#ff3a3a" } },
+];
+
+// The pets you can free (one per world, in order) and their powers in the climb.
+const PETS = [
+  { id: "molly", name: "MOLLY", breed: "DACHSHUND + CHIHUAHUA MIX", power: "BARK BLAST", color: "#c8d3ff",
+    desc: "Every 7 seconds, if an enemy gets close, Molly barks so loud it gets pushed away and hurt.",
+    story: "Molly was napping by the fire in the castle kitchen when the Bagpipe Knight locked her up for barking at his terrible music. She is small, fast, and very, very loud." },
+  { id: "cleo", name: "CLEO", breed: "SPHYNX CAT", power: "SAND SHIELD", color: "#ffd447",
+    desc: "Every 25 seconds Cleo wraps you in a sand shield that blocks one hit (up to 3 shields).",
+    story: "Cleo lived like a queen inside the pyramid until the Mummy Pharaoh wanted her throne cushion. She has no fur, but she has lots of opinions." },
+  { id: "pepper", name: "PEPPER", breed: "RAINBOW PARROT", power: "PARROT PATROL", color: "#7dff7a",
+    desc: "Pepper flies beside you and shoots the nearest enemy every 2 seconds.",
+    story: "Captain Blackbeak kept Pepper in a cage to shout his orders. Now the only thing she shouts is PEW PEW!" },
+  { id: "biscuit", name: "BISCUIT", breed: "LOP-EARED BUNNY", power: "BUNNY HOP", color: "#f2e6d0",
+    desc: "You get one extra jump in mid-air on every climb.",
+    story: "Biscuit hopped into the Haunted Mansion chasing a carrot, and the Ghost King trapped her. She can hop higher than a ghost can float." },
+  { id: "shelly", name: "SHELLY", breed: "SEA TURTLE", power: "SHELL GUARD", color: "#6ac07a",
+    desc: "Hits only add half as much DAMAGE %, so you don't get knocked as far.",
+    story: "Shelly is 200 years old and remembers when Atlantis was dry. The Kraken took her because she would not stop telling stories." },
+  { id: "dusty", name: "DUSTY", breed: "MINI PONY", power: "GALLOP", color: "#d8a060",
+    desc: "You run 20% faster.",
+    story: "Dusty was the fastest pony in the Wild West until Bandit Bull lassoed her. She still has her lucky horseshoe." },
+  { id: "sprinkles", name: "SPRINKLES", breed: "HAMSTER", power: "SUGAR RUSH", color: "#ff8fd0",
+    desc: "Start every climb with full super jumps, and get another one every 25 seconds.",
+    story: "The Gummy Giant caught Sprinkles stuffing her cheeks with candy. She saved some for you." },
+  { id: "tundra", name: "TUNDRA", breed: "PENGUIN", power: "FROST AURA", color: "#8fe3ff",
+    desc: "Enemies that come close to you freeze and slow way down.",
+    story: "Tundra slid into the Frost Yeti's cave by accident. She is very cool, very calm, and very good at belly slides." },
+  { id: "ember", name: "EMBER", breed: "BABY DRAGON", power: "FIRE BREATH", color: "#ff7a3a",
+    desc: "Every 4 seconds Ember breathes fire at enemies in front of you and sets them on fire.",
+    story: "Ember is the Lava Dragon's little cousin, but she never wanted to be a villain. She just wants to toast marshmallows." },
+  { id: "nova", name: "NOVA", breed: "SPACE CAT", power: "STAR POWER", color: "#c39bff",
+    desc: "Every 35 seconds Nova makes you shine like a star: nothing can hurt you for 4 seconds.",
+    story: "Robo Overlord wanted Nova's glowing antenna for a power source. She was born on a comet and purrs in three languages." },
+];
+const BEATRICE = { id: "beatrice", name: "BEATRICE", breed: "BOSTON TERRIER WITH WINGS", power: "DOG SPELLS", color: "#c39bff",
+  desc: "Always with you. She learns a new spell in each biome: CTRL+B (or SPELL) casts it, V (or NEXT) switches.",
+  story: "Beatrice has flown beside you since the very first climb. Her whirly tail spins when she's happy, which is always." };
+
+let petSave = (() => {
+  try {
+    const d = JSON.parse(localStorage.getItem("moonhop.pets.v1"));
+    if (d && Array.isArray(d.freed)) {
+      const freed = d.freed.filter(id => PETS.some(p => p.id === id));
+      return { freed, chosen: freed.includes(d.chosen) ? d.chosen : null };
+    }
+  } catch (e) { /* new save */ }
+  return { freed: [], chosen: null };
+})();
+const savePets = () => { try { localStorage.setItem("moonhop.pets.v1", JSON.stringify(petSave)); } catch (e) { /* just for this visit */ } };
+const petFreed = id => petSave.freed.includes(id);
+const activePet = () => (mode === "main" && petSave.chosen && petFreed(petSave.chosen) ? petSave.chosen : null);
+const nextQuestIndex = () => { const i = PETS.findIndex(p => !petFreed(p.id)); return i >= 0 ? i : Math.floor(Math.random() * PETS.length); };
+
+// ---------- Drawing the pets (feet at 0,0, facing right, about 30 tall) ----------
+function drawPet(id, x, y, s, facing, t) {
+  const el = (cx, cy, rx, ry, col, rot = 0) => { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2); ctx.fill(); };
+  const tri = (a, b, c, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.lineTo(...c); ctx.closePath(); ctx.fill(); };
+  const eye = (ex, ey, r = 1.7, col = "#ffffff") => { el(ex, ey, r, r, col); el(ex + 0.4, ey, r * 0.55, r * 0.55, "#14141c"); el(ex + 0.9, ey - 0.6, 0.45, 0.45, "#ffffff"); };
+  const line = (pts, col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p); ctx.stroke(); };
+  const wag = Math.sin(t * 12) * 3, bob = Math.abs(Math.sin(t * 6)) * 1.2;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing * s, s);
+  switch (id) {
+    case "molly": {                                      // black dachshund + chihuahua
+      const k = "#1b1b22";
+      for (const lx of [-12, -7, 6, 10]) { ctx.fillStyle = k; ctx.fillRect(lx, -6, 3, 6); }
+      line([[-14, -11], [-20, -17 + wag]], k, 2.5);
+      el(0, -10 - bob, 15, 6, k);
+      el(15, -16 - bob, 6.5, 6, k);
+      el(21, -14 - bob, 4, 2.6, "#2a2a33");
+      el(24.5, -14.6 - bob, 1.3, 1.1, "#000000");
+      tri([10, -20 - bob], [8, -32 - bob], [15, -22 - bob], k);
+      tri([15, -21 - bob], [18, -32 - bob], [20, -19 - bob], k);
+      tri([11, -22 - bob], [10, -29 - bob], [14, -22 - bob], "#4a3038");
+      eye(17, -17.5 - bob, 1.8);
+      ctx.fillStyle = "#c39bff"; ctx.fillRect(9, -12 - bob, 5, 2);
+      break;
+    }
+    case "cleo": {                                       // sphynx cat
+      const k = "#e8b8a8";
+      for (const lx of [-9, -5, 5, 9]) { ctx.fillStyle = k; ctx.fillRect(lx, -6, 2.5, 6); }
+      line([[-11, -12], [-17, -18], [-15, -26 + wag * 0.5]], k, 2);
+      el(0, -11, 12, 7, k);
+      ctx.strokeStyle = "#c89888"; ctx.lineWidth = 0.8;
+      for (const wx of [-4, 0, 4]) { ctx.beginPath(); ctx.arc(wx, -12, 3, 0.3, 2.8); ctx.stroke(); }
+      el(13, -20, 7, 6.5, k);
+      tri([8, -24], [6, -36], [13, -26], k); tri([14, -26], [19, -36], [19, -23], k);
+      tri([9, -26], [8, -32], [12, -26], "#ffa0b0");
+      el(11.5, -20, 1.5, 2.2, "#7dff7a"); el(16, -20, 1.5, 2.2, "#7dff7a");
+      el(11.5, -20, 0.5, 1.6, "#14141c"); el(16, -20, 0.5, 1.6, "#14141c");
+      el(19, -17, 1, 0.8, "#ff8fa0");
+      ctx.fillStyle = "#ffd447"; ctx.fillRect(9, -15, 7, 2);
+      break;
+    }
+    case "pepper": {                                     // rainbow parrot
+      line([[-2, 0], [-2, -4]], "#555", 1.5); line([[3, 0], [3, -4]], "#555", 1.5);
+      ctx.fillStyle = "#e8423a"; ctx.fillRect(-6, -10, 4, 12);
+      el(0, -14 - bob, 7, 11, "#3fbf4f");
+      el(2, -12 - bob, 4, 7, "#ffd447");
+      el(-3, -15 - bob, 4, 8, "#2a8a3a", 0.2 + Math.sin(t * 10) * 0.2);
+      el(-4, -9 - bob, 3, 3, "#5a9bff");
+      el(2, -27 - bob, 6, 6, "#e8423a");
+      tri([7, -29 - bob], [12, -25 - bob], [7, -23 - bob], "#ffd447");
+      eye(4, -28 - bob, 1.5);
+      break;
+    }
+    case "biscuit": {                                    // lop-eared bunny
+      el(-11, -12, 4, 4, "#ffffff");
+      el(-2, -10, 11, 9, "#f2e6d0");
+      el(5, -1.5, 6, 2.5, "#e8d8bc");
+      el(9, -19 - bob, 7, 6.5, "#f2e6d0");
+      el(4, -16 - bob, 3, 9, "#c8a882", 0.25);
+      el(14, -17 - bob, 1.3, 1, "#ff8fa0");
+      eye(11, -21 - bob, 1.6);
+      break;
+    }
+    case "shelly": {                                     // sea turtle
+      for (const lx of [-11, 7]) el(lx + 2, -2, 4, 2.5, "#9ad09a");
+      el(15, -8 - bob, 5, 4.5, "#9ad09a");
+      eye(17, -9 - bob, 1.3);
+      ctx.fillStyle = "#3a8a4a"; ctx.beginPath(); ctx.arc(0, -4, 13, Math.PI, 0); ctx.fill();
+      for (const [cx, cy, r] of [[-5, -10, 3], [3, -12, 3], [8, -7, 2.4], [-9, -6, 2.2]]) el(cx, cy, r, r, "#6ac07a");
+      ctx.fillStyle = "#2a6a3a"; ctx.fillRect(-13, -5, 26, 2.5);
+      break;
+    }
+    case "dusty": {                                      // mini pony
+      const k = "#d8a060";
+      for (const lx of [-9, -5, 5, 9]) { ctx.fillStyle = k; ctx.fillRect(lx, -10, 3, 9); ctx.fillStyle = "#5a3a2a"; ctx.fillRect(lx, -2, 3, 2); }
+      line([[-11, -15], [-16, -7 + wag * 0.4]], "#7a4a2a", 3);
+      el(0, -14, 11, 6.5, k);
+      el(10, -21 - bob, 4.5, 7, k, 0.4);
+      el(15, -26 - bob, 6, 4, k, 0.2);
+      line([[8, -28 - bob], [5, -20 - bob], [4, -14]], "#7a4a2a", 3);
+      tri([10, -30 - bob], [11, -35 - bob], [13, -29 - bob], k);
+      eye(15, -27 - bob, 1.4);
+      break;
+    }
+    case "sprinkles": {                                  // hamster
+      el(-4, -16 - bob, 2.6, 2.6, "#f0a050"); el(4, -17 - bob, 2.6, 2.6, "#f0a050");
+      el(4, -17 - bob, 1.3, 1.3, "#ffb0c0");
+      el(0, -9 - bob, 10, 9, "#f0a050");
+      el(3, -6 - bob, 6, 6, "#fff4e6");
+      el(7, -9 - bob, 3, 2.5, "#ffd0b0");
+      el(10, -10 - bob, 1, 0.8, "#ff8fa0");
+      eye(6, -12 - bob, 1.4);
+      for (const [cx, col] of [[-6, "#ff5a5a"], [-2, "#5ad1ff"], [1, "#7dff7a"]]) { ctx.fillStyle = col; ctx.fillRect(cx, -15 - bob, 2, 1); }
+      break;
+    }
+    case "tundra": {                                     // penguin
+      el(-3, 0, 3.5, 1.6, "#ff9f40"); el(3, 0, 3.5, 1.6, "#ff9f40");
+      el(0, -13 - bob, 8, 13, "#1b1b22");
+      el(2, -11 - bob, 5, 10, "#ffffff");
+      el(-6, -12 - bob, 2.5, 6, "#1b1b22", 0.3 + Math.sin(t * 8) * 0.2);
+      tri([6, -21 - bob], [11, -19 - bob], [6, -17 - bob], "#ff9f40");
+      eye(3, -21 - bob, 1.5);
+      ctx.fillStyle = "#5ad1ff"; ctx.fillRect(-3, -15 - bob, 8, 2);
+      break;
+    }
+    case "ember": {                                      // baby dragon
+      tri([-9, -10], [-19, -5 + wag * 0.3], [-9, -6], "#c0302a");
+      for (const lx of [-6, 4]) { ctx.fillStyle = "#c0302a"; ctx.fillRect(lx, -5, 3, 5); }
+      tri([-3, -16], [-13, -29 + Math.sin(t * 10) * 3], [-7, -13], "#8a1f1a");
+      el(0, -11, 10, 8, "#e8423a");
+      el(3, -9, 5, 5, "#ffd447");
+      el(10, -19 - bob, 6.5, 6, "#e8423a");
+      tri([7, -24 - bob], [6, -30 - bob], [10, -24 - bob], "#ffd447");
+      tri([11, -25 - bob], [13, -30 - bob], [14, -24 - bob], "#ffd447");
+      eye(12, -20 - bob, 1.5, "#ffe680");
+      if (Math.sin(t * 3) > 0.85) el(19, -17 - bob, 3, 2, "rgba(255,160,40,0.8)");
+      break;
+    }
+    case "nova": {                                       // space cat
+      const k = "#3fd0c9";
+      for (const lx of [-9, -5, 5, 9]) { ctx.fillStyle = k; ctx.fillRect(lx, -6, 2.5, 6); }
+      line([[-11, -12], [-16, -20], [-12, -24 + wag * 0.4]], k, 2.5);
+      el(0, -10, 11, 7, k);
+      ctx.fillStyle = "#9a6ae0"; ctx.fillRect(-6, -16, 2, 6); ctx.fillRect(-1, -17, 2, 6);
+      el(12, -18 - bob, 7, 6.5, k);
+      tri([7, -22 - bob], [6, -31 - bob], [12, -24 - bob], k); tri([13, -24 - bob], [18, -31 - bob], [18, -21 - bob], k);
+      line([[12, -24 - bob], [15, -34 - bob]], "#c8d3ff", 1.2);
+      el(15, -35 - bob, 2.2, 2.2, `rgba(255,212,71,${0.6 + 0.4 * Math.sin(t * 6)})`);
+      el(10.5, -18 - bob, 2, 2.4, "#c39bff"); el(15.5, -18 - bob, 2, 2.4, "#c39bff");
+      el(10.8, -18.5 - bob, 0.8, 0.8, "#ffffff"); el(15.8, -18.5 - bob, 0.8, 0.8, "#ffffff");
+      break;
+    }
+  }
+  ctx.restore();
+}
+
+// =====================================================================
+//  THE SIDE-SCROLLER
+// =====================================================================
+let sq = null;
+function sqBuild(i) {
+  const rnd = mulberry32(900 + i * 31), R = (a, b) => a + (b - a) * rnd();
+  const ground = [{ x: -300, w: 900 }], plats = [], foes = [], spikes = [], treats = [];
+  let x = 600;
+  const end = 2600 + i * 220;
+  while (x < end) {
+    if (rnd() < 0.35 + i * 0.025) {                     // a pit to jump over (never wider than a jump)
+      const pw = R(70, 105 + i * 4);
+      if (pw > 95) plats.push({ x: x + pw / 2 - 40, y: SQ_GY - R(55, 85), w: 80 });
+      x += pw;
+    }
+    const seg = R(280, 520);
+    ground.push({ x, w: seg });
+    if (rnd() < 0.55) plats.push({ x: x + R(40, seg - 150), y: SQ_GY - R(70, 98), w: R(90, 140) });
+    if (rnd() < 0.55 + i * 0.03) foes.push({ kind: "walk", x: x + R(80, seg - 60), lo: x + 20, hi: x + seg - 20, dir: rnd() < 0.5 ? -1 : 1 });
+    if (rnd() < 0.3 + i * 0.035) foes.push({ kind: "fly", hx: x + R(40, seg - 40), hy: SQ_GY - R(120, 220), ph: R(0, 6) });
+    if (rnd() < 0.22 + i * 0.03 && seg > 300) spikes.push({ x: x + R(130, seg - 150), w: 34 });
+    if (rnd() < 0.12) treats.push({ x: x + R(60, seg - 60), y: SQ_GY - R(40, 70) });
+    x += seg;
+  }
+  const arenaX = x + 260;
+  ground.push({ x, w: arenaX + VIEW_W + 300 - x });     // a runway into the boss arena
+  for (const f of foes) Object.assign(f, { x: f.kind === "fly" ? f.hx : f.x, y: f.kind === "fly" ? f.hy : SQ_GY, hp: i >= 5 ? 2 : 1, alive: true, flash: 0 });
+  return { ground, plats, foes, spikes, treats, arenaX };
+}
+
+function startSideQuest(i) {
+  const L = sqBuild(i);
+  sq = {
+    i, W: SQ_WORLDS[i], pet: PETS[i], ...L, camX: 0, shots: [], bshots: [], parts: [], phase: "intro", timer: 3, boss: null,
+    cage: 0, petX: L.arenaX + 425, paused: false, t: 0, dog: { x: 40, y: SQ_GY - 60 }, newPet: !petFreed(PETS[i].id), prize: null,
+    p: { x: 80, y: SQ_GY, vx: 0, vy: 0, onGround: true, coyote: 0, buffer: 0, facing: 1, hearts: 4, invuln: 0, walk: 0,
+         fireCd: 0, safeX: 80, jumping: false, stun: 0 },
+  };
+  portal = null;
+  for (const k in keys) keys[k] = false;
+  mouseSteer = false;
+  state = "sidequest";
+}
+function sqExit() {
+  sq = null;
+  for (const k in keys) keys[k] = false;
+  state = "playing";
+  player.invuln = Math.max(player.invuln, 2);
+}
+const sqPuff = (x, y, color, n = 10) => {
+  for (let k = 0; k < n; k++) sq.parts.push({ x, y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.8) * 260, life: 0.5, color });
+};
+function sqHurt(dir, pit = false) {
+  const p = sq.p;
+  if (!pit && p.invuln > 0) return;
+  p.hearts--;
+  p.invuln = 1.4;
+  if (!pit) Object.assign(p, { vx: (dir || -p.facing) * 170, vy: -300, stun: 0.25, onGround: false });
+  sqPuff(p.x, p.y - 16, "255,120,120");
+  if (p.hearts <= 0) { sq.phase = "fail"; sq.timer = 3; }
+}
+
+function updateSideQuest(dt) {
+  const q = sq;
+  q.t += dt;
+  for (let k = q.parts.length - 1; k >= 0; k--) {
+    const pt = q.parts[k];
+    pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vy += 600 * dt; pt.life -= dt;
+    if (pt.life <= 0) q.parts.splice(k, 1);
+  }
+  if (q.paused) return;
+  if (q.phase === "intro") { q.timer -= dt; if (q.timer <= 0) q.phase = "play"; return; }
+  if (q.phase === "result") { if (q.timer > 0) q.timer -= dt; return; }
+  if (q.phase === "fail") { q.timer -= dt; if (q.timer <= 0) sqExit(); return; }
+  sqUpdatePlayer(dt);
+  if (q.phase === "fail") return;
+  sqUpdateFoes(dt);
+  if (q.phase === "play" && q.p.x > q.arenaX + 140) {   // the boss arena: the screen locks
+    q.phase = "bossIntro";
+    q.timer = 2.2;
+    q.boss = { x: q.arenaX + 300, y: SQ_GY, vx: 0, vy: 0, hp: q.W.boss.hp, max: q.W.boss.hp, move: "idle", timer: 1.2, mi: 0, flash: 0,
+               face: -1, air: false, shotsLeft: 0, shotT: 0, wind: 0 };
+  }
+  if (q.phase === "bossIntro") { q.timer -= dt; if (q.timer <= 0) q.phase = "fight"; }
+  if (q.phase === "fight") sqUpdateBoss(dt);
+  if (q.phase === "freed") {                             // the cage opens and the pet runs to you
+    q.timer -= dt;
+    q.cage = Math.min(1, q.cage + dt * 0.8);
+    if (q.cage >= 1 && Math.abs(q.petX - q.p.x) > 30) q.petX += Math.sign(q.p.x - q.petX) * 160 * dt;
+    if (q.timer <= 0) { q.phase = "result"; q.timer = 1; }
+  }
+  sqUpdateShots(dt);
+  q.dog.x += (q.p.x - q.p.facing * 34 - q.dog.x) * Math.min(1, dt * 4);
+  q.dog.y += (q.p.y - 50 - q.dog.y) * Math.min(1, dt * 4);
+  if (q.phase === "play") q.camX = clamp(q.p.x - VIEW_W * 0.38, 0, q.arenaX);
+  else q.camX += (q.arenaX - q.camX) * Math.min(1, dt * 4);
+}
+
+function sqUpdatePlayer(dt) {
+  const q = sq, p = q.p, W = q.W, g = 1800 * (W.grav || 1);
+  let left = keys.ArrowLeft || keys.KeyA, right = keys.ArrowRight || keys.KeyD;
+  if (mouseSteer && !left && !right && ed.mouse.in) {   // MOUSE: run toward the pointer
+    const off = ed.mouse.x - (p.x - q.camX);
+    if (off < -14) left = true; else if (off > 14) right = true;
+  }
+  const held = keys.Space || keys.ArrowUp || keys.KeyW || keys.MouseL;
+  const dir = (right ? 1 : 0) - (left ? 1 : 0);
+  if (p.stun > 0) p.stun -= dt;
+  if (dir && p.stun <= 0) {
+    p.vx = clamp(p.vx + dir * (p.onGround ? (W.slippery ? 900 : 2600) : 1700) * dt, -240, 240);
+    p.facing = dir;
+  } else {
+    const dec = (p.onGround ? (W.slippery ? 260 : 3000) : 500) * dt;
+    p.vx = Math.abs(p.vx) <= dec ? 0 : p.vx - Math.sign(p.vx) * dec;
+  }
+  if (p.buffer > 0) p.buffer -= dt;
+  if (p.onGround) p.coyote = 0.09; else if (p.coyote > 0) p.coyote -= dt;
+  if (p.buffer > 0 && p.coyote > 0) Object.assign(p, { vy: -640 * Math.min(1, Math.sqrt(W.grav || 1) * 1.1), onGround: false, coyote: 0, buffer: 0, jumping: true });   // low gravity: floatier, not taller
+  if (p.jumping && !held && p.vy < 0) { p.vy *= 0.45; p.jumping = false; }
+  p.vy = Math.min(p.vy + g * dt, 900);
+  const oldY = p.y;
+  p.x += p.vx * dt;
+  p.y += p.vy * dt;
+  const lo = q.phase === "play" ? 12 : q.arenaX + 12, hi = q.phase === "play" ? Infinity : q.arenaX + VIEW_W - 12;
+  if (p.x < lo) { p.x = lo; p.vx = 0; }
+  if (p.x > hi) { p.x = hi; p.vx = 0; }
+  p.onGround = false;
+  if (p.vy >= 0) {
+    for (const s of q.ground) {
+      if (p.x > s.x - 6 && p.x < s.x + s.w + 6 && oldY <= SQ_GY + 1 && p.y >= SQ_GY) {
+        Object.assign(p, { y: SQ_GY, vy: 0, onGround: true });
+        p.safeX = clamp(p.x, s.x + 24, s.x + s.w - 24);
+      }
+    }
+    for (const s of q.plats) {
+      if (p.x > s.x - 6 && p.x < s.x + s.w + 6 && oldY <= s.y + 1 && p.y >= s.y) Object.assign(p, { y: s.y, vy: 0, onGround: true });
+    }
+  }
+  if (p.onGround) p.jumping = false;
+  p.walk += Math.abs(p.vx) * dt * 0.08;
+  if (p.invuln > 0) p.invuln -= dt;
+  for (const k of q.spikes) if (p.y >= SQ_GY - 14 && p.y <= SQ_GY + 2 && p.x > k.x - 6 && p.x < k.x + k.w + 6) sqHurt(p.x < k.x + k.w / 2 ? -1 : 1);
+  for (const tr of q.treats) {
+    if (!tr.got && Math.abs(p.x - tr.x) < 18 && Math.abs(p.y - 16 - tr.y) < 26) {
+      tr.got = true;
+      if (p.hearts < 5) p.hearts++;
+      sqPuff(tr.x, tr.y, "255,140,160", 8);
+    }
+  }
+  if (p.y > SQ_GY + 240) {                               // fell in a pit: lose a heart, back to safe ground
+    sqHurt(0, true);
+    if (sq.phase !== "fail") Object.assign(p, { x: p.safeX, y: SQ_GY - 60, vx: 0, vy: 0 });
+  }
+  if (p.fireCd > 0) p.fireCd -= dt;
+  if ((keys.KeyF || keys.KeyJ || keys.MouseR) && p.fireCd <= 0) {
+    p.fireCd = 0.3;
+    q.shots.push({ x: p.x + p.facing * 12, y: p.y - 18, vx: p.facing * 520 + p.vx * 0.3, life: 0.8 });
+  }
+}
+
+function sqUpdateFoes(dt) {
+  const q = sq, p = q.p, speed = 55 + q.i * 7;
+  for (const e of q.foes) {
+    if (!e.alive) continue;
+    if (Math.abs(e.x - p.x) > VIEW_W * 1.2) continue;     // asleep until you get close
+    if (e.flash > 0) e.flash -= dt;
+    if (e.kind === "walk") {
+      e.x += e.dir * speed * dt;
+      if (e.x < e.lo) { e.x = e.lo; e.dir = 1; }
+      if (e.x > e.hi) { e.x = e.hi; e.dir = -1; }
+    } else {
+      e.x = e.hx + Math.sin(q.t * 1.3 + e.ph) * 70;
+      e.y = e.hy + Math.sin(q.t * 2.6 + e.ph) * 22;
+    }
+    const ey = e.kind === "walk" ? e.y - 14 : e.y;
+    if (Math.abs(p.x - e.x) < 22 && Math.abs(p.y - 16 - ey) < 30) {
+      if (p.vy > 60 && p.y - 6 < ey) {                   // bop it on the head!
+        e.alive = false;
+        sqPuff(e.x, ey, "255,255,255", 12);
+        p.vy = -470;
+        p.jumping = true;
+      } else sqHurt(p.x < e.x ? -1 : 1);
+    }
+  }
+}
+
+function sqUpdateShots(dt) {
+  const q = sq, p = q.p, b = q.boss;
+  for (let k = q.shots.length - 1; k >= 0; k--) {
+    const s = q.shots[k];
+    s.x += s.vx * dt;
+    s.life -= dt;
+    let gone = s.life <= 0;
+    for (const e of q.foes) {
+      if (gone || !e.alive) continue;
+      const ey = e.kind === "walk" ? e.y - 14 : e.y;
+      if (Math.abs(s.x - e.x) < 18 && Math.abs(s.y - ey) < 20) {
+        gone = true;
+        e.hp--; e.flash = 0.12;
+        if (e.hp <= 0) { e.alive = false; sqPuff(e.x, ey, "255,255,255", 10); }
+      }
+    }
+    if (!gone && b && q.phase === "fight" && Math.abs(s.x - b.x) < 42 && s.y > b.y - 96 && s.y < b.y) {
+      gone = true;
+      sqHitBoss(1);
+    }
+    if (gone) q.shots.splice(k, 1);
+  }
+  for (let k = q.bshots.length - 1; k >= 0; k--) {       // the boss's attacks
+    const s = q.bshots[k];
+    if (s.delay > 0) { s.delay -= dt; continue; }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.life -= dt;
+    const hitR = s.kind === "wave" ? 16 : 14;
+    if (q.phase === "fight" && Math.abs(s.x - p.x) < hitR && Math.abs(s.y - (p.y - 16)) < hitR + 12) { sqHurt(s.vx >= 0 ? 1 : -1); q.bshots.splice(k, 1); continue; }
+    if (s.life <= 0 || s.y > SQ_GY + 20 || s.x < q.arenaX - 40 || s.x > q.arenaX + VIEW_W + 40) q.bshots.splice(k, 1);
+  }
+}
+
+function sqHitBoss(n) {
+  const q = sq, b = q.boss;
+  b.hp -= n;
+  b.flash = 0.15;
+  sqPuff(b.x, b.y - 50, "255,255,255", 6);
+  if (b.hp > 0) return;
+  sqPuff(b.x, b.y - 50, "255,212,71", 40);              // beaten! open the cage
+  q.bshots = [];
+  q.phase = "freed";
+  q.timer = 3.4;
+  if (q.newPet) { petSave.freed.push(q.pet.id); if (!petSave.chosen) petSave.chosen = q.pet.id; savePets(); }
+  else q.prize = grantRelic();                           // already freed: a power-up for this climb instead
+  confettiBurst();
+}
+
+function sqUpdateBoss(dt) {
+  const q = sq, b = q.boss, p = q.p, B = q.W.boss;
+  const lo = q.arenaX + 50, hi = q.arenaX + 370, k = 1 + q.i * 0.06;
+  if (b.flash > 0) b.flash -= dt;
+  b.timer -= dt;
+  if (b.move === "idle") {
+    b.face = p.x < b.x ? -1 : 1;
+    b.vx = 0;
+    if (b.timer <= 0) {
+      b.move = B.moves[b.mi++ % B.moves.length];
+      if (b.move === "charge") { b.wind = 0.55; b.vx = 0; }
+      else if (b.move === "leap") { b.vy = -820; b.air = true; b.vx = (clamp(p.x, lo, hi) - b.x) / 0.91; }
+      else if (b.move === "shoot") { b.shotsLeft = 3; b.shotT = 0.5; }
+      else if (b.move === "rain") {
+        for (let n = 0; n < 5; n++) q.bshots.push({ x: q.arenaX + 40 + Math.random() * (VIEW_W - 80), y: 40, vx: 0, vy: 260 * k, life: 4, kind: "drop", delay: n * 0.3, color: B.shot });
+        b.move = "idle"; b.timer = 1.6;
+      }
+    }
+  } else if (b.move === "charge") {
+    if (b.wind > 0) { b.wind -= dt; if (b.wind <= 0) b.vx = b.face * 330 * k; }
+    else if ((b.vx < 0 && b.x <= lo) || (b.vx > 0 && b.x >= hi)) { b.vx = 0; b.move = "idle"; b.timer = Math.max(0.5, 1.2 - q.i * 0.06); sqPuff(b.x + b.face * 40, b.y - 20, "200,200,200", 8); }
+  } else if (b.move === "shoot") {
+    b.face = p.x < b.x ? -1 : 1;
+    b.shotT -= dt;
+    if (b.shotT <= 0) {
+      const sx = b.x + b.face * 30, sy = b.y - 64, a = Math.atan2(p.y - 16 - sy, p.x - sx);
+      q.bshots.push({ x: sx, y: sy, vx: Math.cos(a) * 250 * k, vy: Math.sin(a) * 250 * k, life: 3, kind: "ball", color: B.shot });
+      b.shotsLeft--;
+      b.shotT = 0.45;
+      if (b.shotsLeft <= 0) { b.move = "idle"; b.timer = Math.max(0.5, 1.2 - q.i * 0.06); }
+    }
+  }
+  if (b.air) {                                           // leaping: land with a shockwave both ways
+    b.vy += 1800 * dt;
+    b.y += b.vy * dt;
+    if (b.y >= SQ_GY) {
+      Object.assign(b, { y: SQ_GY, vy: 0, air: false, vx: 0, move: "idle", timer: Math.max(0.6, 1.3 - q.i * 0.06) });
+      for (const d of [-1, 1]) q.bshots.push({ x: b.x + d * 40, y: SQ_GY - 10, vx: d * 260 * k, vy: 0, life: 2, kind: "wave", color: B.shot });
+      sqPuff(b.x, SQ_GY, "200,180,160", 14);
+    }
+  }
+  b.x = clamp(b.x + b.vx * dt, lo, hi);
+  // Bump the boss: hurt unless you land on its head (that's 2 damage!)
+  if (Math.abs(p.x - b.x) < 48 && p.y > b.y - 100 && p.y - 30 < b.y) {
+    if (p.y < b.y - 66) { if (p.vy > 60) { sqHitBoss(2); p.vy = -560; p.jumping = true; } }   // on top: bop it
+    else sqHurt(p.x < b.x ? -1 : 1);
+  }
+}
+
+function sideQuestKey(c) {
+  const q = sq;
+  if (!q) return;
+  if (q.paused) {
+    if (c === "Escape" || c === "KeyP" || c === "Enter" || c === "Space") q.paused = false;
+    else if (c === "KeyX") sqExit();
+    return;
+  }
+  if (c === "Escape" || c === "KeyP") { if (q.phase !== "result") q.paused = true; return; }
+  if (q.phase === "intro") { if ((JUMP_CODES.includes(c) || c === "Enter") && q.timer < 2.2) q.phase = "play"; return; }
+  if (q.phase === "result") { if (q.timer <= 0 && (JUMP_CODES.includes(c) || c === "Enter" || c === "KeyF")) sqExit(); return; }
+  if (JUMP_CODES.includes(c)) q.p.buffer = JUMP_BUFFER;
+  if (/^(Arrow|Key[AD]$)/.test(c)) mouseSteer = false;
+}
+
+// ---------- Drawing the side quest ----------
+function sqProp(type, x, gy, t, k) {
+  const poly = (pts, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p); ctx.closePath(); ctx.fill(); };
+  const circ = (cx, cy, r, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); };
+  switch (type) {
+    case "tower":                                        // a castle tower with a tartan banner
+      ctx.fillStyle = "#6a6a78"; ctx.fillRect(x - 28, gy - 190, 56, 190);
+      for (let c = 0; c < 4; c++) ctx.fillRect(x - 28 + c * 16, gy - 204, 10, 14);
+      ctx.fillStyle = "#2a2a36"; ctx.fillRect(x - 6, gy - 160, 12, 20);
+      ctx.fillStyle = "#c0392b"; ctx.fillRect(x - 14, gy - 120, 28, 46);
+      ctx.fillStyle = "#2e7d32"; for (const sx of [-10, 0, 8]) ctx.fillRect(x + sx, gy - 120, 3, 46);
+      ctx.fillRect(x - 14, gy - 104, 28, 3);
+      ctx.fillStyle = `rgba(255,${170 + 50 * Math.sin(t * 9 + k) | 0},60,0.9)`; ctx.fillRect(x + 32, gy - 70, 5, 9);
+      break;
+    case "pyramid":
+      poly([[x - 90, gy], [x, gy - 120], [x + 90, gy]], "#d8a860");
+      poly([[x, gy - 120], [x + 90, gy], [x + 20, gy]], "#b88848");
+      break;
+    case "mast":
+      ctx.fillStyle = "#6a4520"; ctx.fillRect(x - 4, gy - 230, 8, 230);
+      ctx.fillStyle = "#f6f0e0"; ctx.fillRect(x - 40, gy - 210, 80, 70); ctx.fillRect(x - 32, gy - 130, 64, 56);
+      ctx.fillStyle = "#1b1b22"; ctx.fillRect(x, gy - 240, 26, 14);
+      circ(x + 11, gy - 233, 3, "#ffffff");
+      break;
+    case "deadtree":
+      ctx.strokeStyle = "#1a0f22"; ctx.lineWidth = 8; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x, gy - 150); ctx.moveTo(x, gy - 100); ctx.lineTo(x - 40, gy - 140);
+      ctx.moveTo(x, gy - 130); ctx.lineTo(x + 36, gy - 170); ctx.stroke();
+      ctx.fillStyle = "rgba(255,220,120,0.8)"; ctx.fillRect(x + 50, gy - 90, 10, 14);          // a glowing window far away
+      break;
+    case "column":
+      ctx.fillStyle = "#c8b890"; ctx.fillRect(x - 15, gy - 150 + (k % 3) * 30, 30, 150);
+      ctx.fillRect(x - 20, gy - 156 + (k % 3) * 30, 40, 8);
+      circ(x + 20, gy - 60 - ((t * 40 + k * 50) % 160), 4, "rgba(220,240,255,0.6)");
+      break;
+    case "cactus":
+      ctx.fillStyle = "#3a8a4a"; ctx.fillRect(x - 8, gy - 100, 16, 100);
+      ctx.fillRect(x - 28, gy - 70, 20, 10); ctx.fillRect(x - 28, gy - 90, 10, 24);
+      ctx.fillRect(x + 8, gy - 56, 20, 10); ctx.fillRect(x + 18, gy - 80, 10, 30);
+      break;
+    case "lollipop": {
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(x - 3, gy - 130, 6, 130);
+      circ(x, gy - 150, 34, ["#ff5a8a", "#7dd0ff", "#ffd447"][k % 3]);
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 5;
+      ctx.beginPath(); for (let a = 0; a < 12; a += 0.3) ctx.lineTo(x + Math.cos(a) * a * 2.6, gy - 150 + Math.sin(a) * a * 2.6); ctx.stroke();
+      break;
+    }
+    case "iceberg":
+      poly([[x - 80, gy], [x - 20, gy - 150], [x + 30, gy - 110], [x + 80, gy]], "#d8ecff");
+      poly([[x - 20, gy - 150], [x + 30, gy - 110], [x - 5, gy]], "#b0d0f0");
+      break;
+    case "volcano":
+      poly([[x - 110, gy], [x - 24, gy - 150], [x + 24, gy - 150], [x + 110, gy]], "#3a1a14");
+      ctx.fillStyle = `rgba(255,${100 + 60 * Math.sin(t * 3 + k) | 0},20,0.9)`; ctx.fillRect(x - 24, gy - 154, 48, 8);
+      break;
+    case "antenna":
+      ctx.strokeStyle = "#59617a"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(x - 20, gy); ctx.lineTo(x, gy - 170); ctx.lineTo(x + 20, gy); ctx.moveTo(x - 12, gy - 80); ctx.lineTo(x + 12, gy - 80); ctx.stroke();
+      circ(x, gy - 176, 6, Math.floor(t * 2 + k) % 2 ? "#ff3a3a" : "#5a1a1a");
+      break;
+  }
+}
+
+function sqBlock(x, y, w, h, W) {
+  const [top, body, line] = W.ground;
+  ctx.fillStyle = body; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = top; ctx.fillRect(x, y, w, 10);
+  ctx.fillStyle = line;
+  if (W.pattern === "brick") {
+    for (let ry = y + 10; ry < y + h; ry += 16) {
+      ctx.fillRect(x, ry, w, 2);
+      for (let rx = x + ((ry / 16) % 2 ? 0 : 16); rx < x + w; rx += 32) ctx.fillRect(rx, ry, 2, 16);
+    }
+  } else if (W.pattern === "plank") {
+    for (let rx = x + 30; rx < x + w; rx += 44) ctx.fillRect(rx, y, 2, h);
+    ctx.fillRect(x, y + 10, w, 2);
+  } else if (W.pattern === "candy") {
+    for (let rx = x - h; rx < x + w; rx += 26) { ctx.beginPath(); ctx.moveTo(rx, y + 10); ctx.lineTo(rx + 10, y + 10); ctx.lineTo(rx + 10 + 40, y + 50); ctx.lineTo(rx + 40, y + 50); ctx.fill(); }
+  } else if (W.pattern === "ice") {
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; for (let rx = x + 10; rx < x + w; rx += 50) ctx.fillRect(rx, y + 3, 20, 3);
+  } else if (W.pattern === "panel") {
+    for (let rx = x; rx < x + w; rx += 40) ctx.fillRect(rx, y + 10, 2, h);
+    for (let ry = y + 10; ry < y + h; ry += 40) ctx.fillRect(x, ry, w, 2);
+  } else {
+    for (let rx = x + 14; rx < x + w; rx += 37) ctx.fillRect(rx, y + 22 + (rx % 3) * 8, 4, 3);
+  }
+}
+
+function sqDrawWalker(e, W, t) {
+  const [body, accent, hat] = W.walker, step = Math.sin(t * 10 + e.x * 0.05) * 3;
+  ctx.save();
+  ctx.translate(e.x - sq.camX, e.y);
+  ctx.scale(e.dir, 1);
+  if (e.flash > 0) ctx.globalAlpha = 0.5;
+  ctx.fillStyle = "#1b1b22"; ctx.fillRect(-9, -6 + Math.max(0, step), 6, 6); ctx.fillRect(3, -6 + Math.max(0, -step), 6, 6);
+  ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, -16, 14, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(4, -19, 4, 0, Math.PI * 2); ctx.arc(10, -18, 3.2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#14141c"; ctx.beginPath(); ctx.arc(5.5, -19, 1.8, 0, Math.PI * 2); ctx.arc(11, -18, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = accent;
+  if (hat === "helmet") { ctx.fillRect(-12, -30, 24, 6); ctx.fillStyle = "#c0392b"; ctx.fillRect(-3, -38, 5, 9); }
+  else if (hat === "claws") { ctx.beginPath(); ctx.arc(16, -14, 5, 0, Math.PI * 2); ctx.arc(-15, -14, 5, 0, Math.PI * 2); ctx.fill(); }
+  else if (hat === "cowboy") { ctx.fillRect(-14, -27, 28, 3); ctx.fillRect(-8, -34, 16, 8); }
+  else if (hat === "hat") { ctx.fillStyle = "#1b1b22"; ctx.fillRect(-7, -36, 14, 10); ctx.fillRect(-11, -27, 22, 3); ctx.fillStyle = accent; ctx.fillRect(12, -16, 7, 3); }
+  else if (hat === "horns") { ctx.beginPath(); ctx.moveTo(-6, -26); ctx.lineTo(-10, -36); ctx.lineTo(-2, -27); ctx.moveTo(6, -26); ctx.lineTo(10, -36); ctx.lineTo(2, -27); ctx.fill(); }
+  else if (hat === "antenna") { ctx.fillRect(-1, -38, 2, 10); ctx.beginPath(); ctx.arc(0, -39, 3, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+function sqDrawFlyer(e, W, t) {
+  const [body, wing] = W.flyer, flap = Math.sin(t * 14 + e.ph) * 0.7;
+  ctx.save();
+  ctx.translate(e.x - sq.camX, e.y);
+  if (e.flash > 0) ctx.globalAlpha = 0.5;
+  ctx.fillStyle = wing;
+  for (const s of [-1, 1]) { ctx.save(); ctx.scale(s, 1); ctx.rotate(-flap); ctx.beginPath(); ctx.ellipse(13, -2, 12, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+  ctx.fillStyle = body; ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(-4, -2, 3, 0, Math.PI * 2); ctx.arc(4, -2, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#14141c"; ctx.beginPath(); ctx.arc(-4, -1, 1.5, 0, Math.PI * 2); ctx.arc(4, -1, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function sqDrawBoss(b, look, t) {
+  const el = (cx, cy, rx, ry, col, rot = 0) => { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2); ctx.fill(); };
+  const poly = (pts, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p); ctx.closePath(); ctx.fill(); };
+  const box = (x, y, w, h, col, r = 6) => { ctx.fillStyle = col; rr(x, y, w, h, r); ctx.fill(); };
+  const eyes = (y, gap, col = "#ffffff", r = 5) => { for (const s of [-1, 1]) { el(8 + s * gap, y, r, r, col); el(10 + s * gap, y, r * 0.5, r * 0.5, "#14141c"); } };
+  const bob = Math.sin(t * 4) * 2;
+  ctx.save();
+  ctx.translate(b.x - sq.camX, b.y);
+  ctx.scale(b.face, 1);
+  if (b.flash > 0 && Math.floor(t * 30) % 2) ctx.globalAlpha = 0.4;
+  if (b.wind > 0) ctx.translate((Math.random() - 0.5) * 6, 0);          // shaking before a charge
+  switch (look) {
+    case "knight":
+      box(-18, -24, 13, 24, "#6a6a78"); box(5, -24, 13, 24, "#6a6a78");
+      box(-26, -44, 52, 22, "#c0392b", 3);
+      ctx.fillStyle = "#2e7d32"; for (const sx of [-22, -12, -2, 8, 18]) ctx.fillRect(sx, -44, 4, 22);
+      ctx.fillRect(-26, -36, 52, 4);
+      box(-24, -80, 48, 38, "#9aa3b8", 10);
+      ctx.strokeStyle = "#59617a"; ctx.lineWidth = 2; rr(-24, -80, 48, 38, 10); ctx.stroke();
+      el(26, -62, 14, 10, "#7a3a9a");
+      ctx.strokeStyle = "#3a2a1a"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(28, -70); ctx.lineTo(40, -104); ctx.moveTo(33, -68); ctx.lineTo(48, -96); ctx.moveTo(20, -58); ctx.lineTo(14, -66); ctx.stroke();
+      box(-18, -110, 36, 32, "#9aa3b8", 10);
+      ctx.fillStyle = "#14141c"; ctx.fillRect(-12, -97, 26, 5);
+      ctx.fillStyle = "#ff5a5a"; ctx.fillRect(2, -96, 4, 3); ctx.fillRect(9, -96, 4, 3);
+      el(-2, -116, 7, 13, "#d0302a", -0.3 + Math.sin(t * 5) * 0.1);
+      break;
+    case "mummy":
+      box(-22, -84, 44, 84, "#e8dcc0", 12);
+      ctx.strokeStyle = "#c8b898"; ctx.lineWidth = 2;
+      for (let y = -78; y < 0; y += 9) { ctx.beginPath(); ctx.moveTo(-22, y); ctx.lineTo(22, y + 4); ctx.stroke(); }
+      box(18, -70 + bob, 22, 10, "#e8dcc0", 5);
+      poly([[-26, -100], [26, -100], [34, -60], [-34, -60]], "#3a6aff");
+      ctx.fillStyle = "#ffd447"; for (const sy of [-94, -84, -74, -66]) ctx.fillRect(-30, sy, 60, 3);
+      el(0, -96, 17, 16, "#e8dcc0");
+      el(-3, -98, 4, 3, "#ffd447"); el(9, -98, 4, 3, "#ffd447");
+      poly([[-18, -112], [18, -112], [0, -126]], "#ffd447");
+      break;
+    case "pirate":
+      box(-14, -12, 6, 12, "#ff9f40", 2); box(8, -12, 6, 12, "#ff9f40", 2);
+      el(0, -48, 28, 38, "#2a2a33");
+      el(6, -44, 15, 26, "#4a4a55");
+      el(-14, -52, 11, 24, "#1a1a22", 0.2 + Math.sin(t * 6) * 0.15);
+      poly([[-24, -70], [22, -40], [16, -32], [-28, -62]], "#d0302a");
+      el(6, -90, 17, 16, "#2a2a33");
+      poly([[18, -94], [42, -86], [18, -78]], "#ff9f40");
+      ctx.fillStyle = "#14141c"; ctx.fillRect(-8, -96, 30, 3); el(13, -92, 5, 5, "#14141c");
+      el(0, -92, 3, 3, "#ffffff");
+      poly([[-22, -102], [34, -102], [6, -128]], "#1b1b22");
+      el(6, -110, 4, 4, "#ffffff");
+      break;
+    case "ghost": {
+      ctx.translate(0, -16 + Math.sin(t * 2) * 8);
+      ctx.fillStyle = "rgba(230,230,255,0.88)";
+      ctx.beginPath(); ctx.arc(0, -70, 34, Math.PI, 0); ctx.lineTo(34, -10);
+      for (let k = 0; k <= 6; k++) ctx.lineTo(34 - k * 11.3, -10 + (k % 2 ? -10 : 4) + Math.sin(t * 6 + k) * 3);
+      ctx.closePath(); ctx.fill();
+      el(-4, -74, 6, 9, "#14141c"); el(14, -74, 6, 9, "#14141c");
+      el(6, -52, 7, 9, "#14141c");
+      poly([[-22, -100], [-22, -118], [-11, -106], [0, -122], [11, -106], [22, -118], [22, -100]], "#ffd447");
+      el(0, -110, 3, 3, "#ff5a8a");
+      break;
+    }
+    case "kraken":
+      ctx.strokeStyle = "#7a3a90"; ctx.lineWidth = 9; ctx.lineCap = "round";
+      for (let k = 0; k < 6; k++) {
+        ctx.beginPath();
+        for (let j = 0; j <= 8; j++) ctx.lineTo(-30 + k * 12 + Math.sin(t * 3 + k + j * 0.6) * (j * 2), -34 + j * 5);
+        ctx.stroke();
+      }
+      el(0, -66, 36, 42, "#9a4ab0");
+      for (const [sx, sy] of [[-16, -86], [14, -94], [-4, -100], [20, -70]]) el(sx, sy, 5, 5, "#c07ad0");
+      el(-6, -62, 9, 10, "#ffd447"); el(18, -62, 9, 10, "#ffd447");
+      el(-6, -62, 2.5, 8, "#14141c"); el(18, -62, 2.5, 8, "#14141c");
+      break;
+    case "bull":
+      for (const lx of [-22, -8, 8, 20]) box(lx, -24, 9, 24, "#5a3218", 2);
+      box(-30, -66, 60, 44, "#7a4a2a", 16);
+      box(14, -92, 32, 30, "#7a4a2a", 10);
+      poly([[18, -90], [6, -106], [22, -94]], "#f0e8d8"); poly([[40, -90], [52, -106], [36, -94]], "#f0e8d8");
+      box(30, -74, 18, 12, "#c88a6a", 5);
+      ctx.strokeStyle = "#ffd447"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(40, -64, 5, 0, Math.PI); ctx.stroke();
+      el(24, -84, 3, 3, "#14141c"); el(36, -84, 3, 3, "#14141c");
+      poly([[6, -66], [34, -66], [20, -50]], "#d0302a");
+      box(10, -100, 40, 6, "#4a2a12", 2); box(18, -112, 24, 14, "#4a2a12", 4);
+      break;
+    case "gummy":
+      ctx.fillStyle = "rgba(255,74,106,0.88)";
+      el(0, -40 + bob, 30, 38, "rgba(255,74,106,0.88)");
+      el(-26, -48 + bob, 9, 14, "rgba(255,74,106,0.88)", 0.4); el(26, -48 + bob, 9, 14, "rgba(255,74,106,0.88)", -0.4);
+      el(0, -86 + bob, 23, 21, "rgba(255,74,106,0.9)");
+      el(-16, -103 + bob, 8, 8, "rgba(255,74,106,0.9)"); el(16, -103 + bob, 8, 8, "rgba(255,74,106,0.9)");
+      el(-7, -90 + bob, 3.5, 3.5, "#14141c"); el(9, -90 + bob, 3.5, 3.5, "#14141c");
+      el(1, -80 + bob, 6, 4, "#d02a4a");
+      el(-10, -50 + bob, 8, 14, "rgba(255,255,255,0.35)");
+      break;
+    case "yeti":
+      el(-22, -48, 10, 28, "#e6eef8", 0.2); el(22, -48, 10, 28, "#e6eef8", -0.2);
+      el(0, -46, 30, 44, "#f0f6ff");
+      ctx.strokeStyle = "#c8d8e8"; ctx.lineWidth = 2;
+      for (let k = 0; k < 10; k++) { const a = k * 0.6; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 22, -46 + Math.sin(a) * 30); ctx.lineTo(Math.cos(a) * 28, -46 + Math.sin(a) * 38); ctx.stroke(); }
+      box(-16, -96, 32, 26, "#a8c8e8", 10);
+      poly([[-16, -98], [-26, -116], [-8, -100]], "#8a93a8"); poly([[16, -98], [26, -116], [8, -100]], "#8a93a8");
+      el(-6, -86, 3.5, 3.5, "#14141c"); el(8, -86, 3.5, 3.5, "#14141c");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(-6, -78, 14, 4);
+      break;
+    case "dragon":
+      poly([[-26, -34], [-62, -20], [-26, -22]], "#a0261f");
+      poly([[-10, -58], [-56, -104 + Math.sin(t * 6) * 8], [-30, -50]], "#7a1a14");
+      for (const lx of [-16, 8]) box(lx, -22, 12, 22, "#a0261f", 3);
+      el(-4, -42, 32, 26, "#c0302a");
+      el(4, -38, 18, 17, "#ffd447");
+      ctx.fillStyle = "#e0b030"; for (const sy of [-48, -40, -32]) ctx.fillRect(-10, sy, 26, 2);
+      el(28, -78, 18, 13, "#c0302a", -0.2);
+      el(16, -62, 10, 16, "#c0302a", 0.4);
+      poly([[18, -88], [12, -106], [24, -90]], "#ffd447"); poly([[30, -90], [30, -108], [36, -90]], "#ffd447");
+      el(32, -82, 4, 3, "#ffe680"); el(33, -82, 1.5, 2.5, "#14141c");
+      el(42, -74, 2, 1.5, "#14141c");
+      break;
+    case "robot":
+      box(-32, -18, 64, 18, "#2a2f40", 8);
+      for (let k = 0; k < 5; k++) el(-24 + k * 12, -9, 4, 4, "#59617a");
+      box(-26, -72, 52, 54, "#8a93a8", 6);
+      ctx.strokeStyle = "#59617a"; ctx.lineWidth = 2; ctx.strokeRect(-18, -64, 36, 22);
+      for (let k = 0; k < 3; k++) el(-10 + k * 10, -30, 3, 3, Math.floor(t * 3 + k) % 2 ? "#7dff7a" : "#2a5a2a");
+      box(26, -60, 22, 10, "#6a7388", 3); box(44, -64, 8, 18, "#59617a", 2);
+      box(-18, -100, 36, 28, "#9aa3b8", 6);
+      box(-12, -92, 28, 8, "#14141c", 3);
+      ctx.fillStyle = "#ff3a3a"; ctx.fillRect(-10 + ((t * 30) % 22), -90, 6, 4);
+      ctx.strokeStyle = "#59617a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -100); ctx.lineTo(0, -114); ctx.stroke();
+      el(0, -116, 4, 4, "#ff3a3a");
+      break;
+  }
+  ctx.restore();
+}
+
+function sqDrawCage(x, t) {
+  const q = sq, open = q.cage, cx = x - q.camX;
+  ctx.fillStyle = "#3a3a44"; ctx.fillRect(cx - 34, SQ_GY - 6, 68, 6);
+  if (open < 1) drawPet(q.pet.id, cx, SQ_GY - 6, 1.6, -1, t);
+  ctx.strokeStyle = "#8a8a95"; ctx.lineWidth = 3;
+  const lift = open * 80;
+  for (let k = 0; k < 7; k++) { ctx.beginPath(); ctx.moveTo(cx - 30 + k * 10, SQ_GY - 72 - lift); ctx.lineTo(cx - 30 + k * 10, SQ_GY - 6 - lift); ctx.stroke(); }
+  ctx.fillStyle = "#59617a"; ctx.fillRect(cx - 34, SQ_GY - 78 - lift, 68, 8);
+  if (open <= 0) { ctx.fillStyle = "#ffd447"; ctx.fillRect(cx - 5, SQ_GY - 44, 10, 10); }       // the lock
+}
+
+function drawSideQuest(t) {
+  const q = sq, W = q.W, cam = q.camX;
+  const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  g.addColorStop(0, W.sky[0]); g.addColorStop(1, W.sky[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  if (W.sun) { ctx.fillStyle = W.sun[0]; ctx.beginPath(); ctx.arc(W.sun[1], W.sun[2], W.sun[3], 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = W.far;                                       // far hills (or waves, dunes, mesas...)
+  ctx.beginPath(); ctx.moveTo(0, VIEW_H);
+  for (let x = 0; x <= VIEW_W; x += 8) { const u = x + cam * 0.2; ctx.lineTo(x, 400 - 50 - 40 * Math.sin(u * 0.01) - 25 * Math.sin(u * 0.023 + 1)); }
+  ctx.lineTo(VIEW_W, VIEW_H); ctx.fill();
+  const off = cam * 0.5, k0 = Math.floor(off / 230) - 1;     // middle layer: towers, pyramids, masts...
+  for (let k = k0; k < k0 + 5; k++) sqProp(W.prop, k * 230 - off + 80, SQ_GY + 10, t, Math.abs(k));
+  if (W.lava) { ctx.fillStyle = `rgb(255,${90 + 30 * Math.sin(t * 3) | 0},20)`; ctx.fillRect(0, SQ_GY + 60, VIEW_W, VIEW_H); }
+  for (const s of q.ground) { const x = s.x - cam; if (x < VIEW_W && x + s.w > 0) sqBlock(x, SQ_GY, s.w, VIEW_H - SQ_GY, W); }
+  for (const s of q.plats) { const x = s.x - cam; if (x < VIEW_W && x + s.w > 0) sqBlock(x, s.y, s.w, 18, W); }
+  ctx.fillStyle = "#d8dce8";
+  for (const s of q.spikes) {
+    const x = s.x - cam;
+    if (x > VIEW_W || x + s.w < 0) continue;
+    ctx.beginPath();
+    for (let k = 0; k < 4; k++) { ctx.moveTo(x + k * 8.5, SQ_GY); ctx.lineTo(x + k * 8.5 + 4.25, SQ_GY - 14); ctx.lineTo(x + k * 8.5 + 8.5, SQ_GY); }
+    ctx.fill();
+  }
+  for (const tr of q.treats) if (!tr.got) exHeart(tr.x - cam, tr.y + Math.sin(t * 3 + tr.x) * 3, 7, "#ff5a6e");
+  if (q.camX > q.arenaX - VIEW_W) sqDrawCage(q.arenaX + 425, t);
+  for (const e of q.foes) if (e.alive && Math.abs(e.x - cam - VIEW_W / 2) < VIEW_W) (e.kind === "walk" ? sqDrawWalker : sqDrawFlyer)(e, W, t);
+  if (q.boss && q.boss.hp > 0) sqDrawBoss(q.boss, W.boss.look, t);
+  for (const s of q.bshots) {
+    if (s.delay > 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.beginPath(); ctx.ellipse(s.x - cam, SQ_GY - 2, 12, 4, 0, 0, Math.PI * 2); ctx.fill(); continue; }
+    ctx.fillStyle = s.color;
+    ctx.beginPath();
+    if (s.kind === "wave") ctx.ellipse(s.x - cam, s.y, 16, 10, 0, 0, Math.PI * 2); else ctx.arc(s.x - cam, s.y, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.beginPath(); ctx.arc(s.x - cam - 2, s.y - 2, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  if (q.phase === "freed" || q.phase === "result") if (q.cage >= 1) drawPet(q.pet.id, q.petX - cam, SQ_GY, 1.6, q.p.x > q.petX ? 1 : -1, t);
+  const p = q.p;
+  drawDogAt(q.dog.x - cam, q.dog.y - 30 + Math.sin(t * 3) * 3, p.x > q.dog.x ? 1 : -1, 1.1, t);
+  ctx.save();
+  if (p.invuln > 0 && Math.floor(t * 12) % 2 === 0) ctx.globalAlpha = 0.45;
+  ctx.translate(p.x - cam, p.y);
+  ctx.scale(p.facing, 1);
+  drawAstronaut(currentChar(), !p.onGround, p.onGround && Math.abs(p.vx) > 20 ? Math.sin(p.walk) * 2.5 : 0);
+  ctx.restore();
+  ctx.fillStyle = "#8fe3ff";
+  for (const s of q.shots) { ctx.beginPath(); ctx.arc(s.x - cam, s.y, 4, 0, Math.PI * 2); ctx.fill(); }
+  for (const pt of q.parts) { ctx.fillStyle = `rgba(${pt.color},${Math.max(0, pt.life * 2)})`; ctx.fillRect(pt.x - cam - 2, pt.y - 2, 4, 4); }
+}
+
+function drawSideQuestHUD(t) {
+  const q = sq, cx = VIEW_W / 2, p = q.p;
+  ctx.fillStyle = "rgba(0,0,0,0.45)"; rr(8, 8, 220, 46, 8); ctx.fill();
+  txt(`SIDE QUEST ${q.i + 1}: ${q.W.name}`, 16, 14, 7, "#ffd447");
+  for (let k = 0; k < Math.max(4, p.hearts); k++) exHeart(24 + k * 20, 38, 7, k < p.hearts ? "#ff5a6e" : "rgba(255,255,255,0.2)");
+  if (q.phase === "play") {                              // how far to the boss
+    const f = clamp(p.x / (q.arenaX + 140), 0, 1);
+    ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.fillRect(VIEW_W - 170, 22, 150, 6);
+    ctx.fillStyle = "#ffd447"; ctx.fillRect(VIEW_W - 170, 22, 150 * f, 6);
+    txt("BOSS", VIEW_W - 20, 32, 7, "#ffd447", "right");
+  }
+  if (q.boss && (q.phase === "fight" || q.phase === "bossIntro")) {
+    txt(q.W.boss.name, cx, 66, 9, "#ff8a7a", "center");
+    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(cx - 120, 82, 240, 10);
+    ctx.fillStyle = "#ff5a5a"; ctx.fillRect(cx - 120, 82, 240 * Math.max(0, q.boss.hp) / q.boss.max, 10);
+  }
+  if (q.phase === "intro") {
+    panel(36, 170, VIEW_W - 72, 330);
+    txt(`SIDE QUEST ${q.i + 1} OF ${SQ_WORLDS.length}`, cx, 190, 9, "#c39bff", "center");
+    txt(q.W.name, cx, 214, 12, "#ffd447", "center");
+    drawPet(q.pet.id, cx, 316, 2.4, 1, t);
+    txt(q.newPet ? `SAVE ${q.pet.name} FROM ${q.W.boss.name}!` : `${q.pet.name} IS ALREADY FREE. WIN A POWER-UP!`, cx, 334, 8, "#ffffff", "center");
+    txt("BOP ENEMIES ON THE HEAD, OR SHOOT THEM.", cx, 364, 7, "#c8d3ff", "center");
+    txt("JUMP ON THE BOSS'S HEAD FOR DOUBLE DAMAGE!", cx, 380, 7, "#c8d3ff", "center");
+    txt(IS_TOUCH ? "< > MOVE   JUMP   SHOOT" : mouseMode ? "MOUSE MOVES  LEFT CLICK JUMPS  RIGHT CLICK SHOOTS" : "ARROWS MOVE   SPACE JUMPS   F SHOOTS", cx, 410, 7, "#7dff7a", "center");
+    txt(String(Math.max(1, Math.ceil(q.timer - 0.4))), cx, 440, 20, "#ffffff", "center");
+  } else if (q.phase === "bossIntro") {
+    txt(q.W.boss.name, cx, 200, 18, "#ff5a5a", "center");
+    txt(`IS GUARDING ${q.pet.name}!`, cx, 230, 10, "#ffffff", "center");
+  } else if (q.phase === "freed") {
+    txt(`${q.pet.name} IS FREE!`, cx, 200, 20, "#7dff7a", "center");
+  } else if (q.phase === "result") {
+    panel(36, 150, VIEW_W - 72, 400);
+    txt(q.newPet ? "NEW PET!" : "QUEST COMPLETE!", cx, 168, 10, "#c39bff", "center");
+    txt(q.pet.name, cx, 186, 18, q.pet.color, "center");
+    txt(q.pet.breed, cx, 210, 7, "#c8d3ff", "center");
+    drawPet(q.pet.id, cx, 300, 3, 1, t);
+    txt(`POWER: ${q.pet.power}`, cx, 316, 9, "#ffd447", "center");
+    wrapLines(q.pet.desc.toUpperCase(), VIEW_W - 110, 7).forEach((l, k) => txt(l, cx, 334 + k * 13, 7, "#ffffff", "center"));
+    if (q.newPet) txt(petSave.chosen === q.pet.id ? `${q.pet.name} WILL JOIN YOUR NEXT CLIMB!` : "PICK PETS IN THE PETS MENU", cx, 400, 7, "#7dff7a", "center");
+    else if (q.prize) txt(`YOU WON A POWER-UP: ${q.prize.name}`, cx, 400, 7, q.prize.color, "center");
+    if (q.timer <= 0) {
+      if (USE_BUTTONS()) uiButton("BACK TO THE CLIMB", cx - 120, 470, 240, 40, sqExit, "#7dff7a", 10);
+      else txt("SPACE = BACK TO THE CLIMB", cx, 484, 10, "#7dff7a", "center");
+    }
+  } else if (q.phase === "fail") {
+    panel(50, 230, VIEW_W - 100, 150);
+    txt("OH NO!", cx, 252, 20, "#ff8a7a", "center");
+    txt(`${q.pet.name} IS STILL TRAPPED.`, cx, 290, 9, "#ffffff", "center");
+    txt("TRY AGAIN AT THE NEXT GOLD PORTAL!", cx, 312, 8, "#ffd447", "center");
+  }
+  if (q.paused) {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    txt("PAUSED", cx, 220, 24, "#ffffff", "center");
+    if (USE_BUTTONS()) {
+      uiButton("KEEP GOING", cx - 110, 290, 220, 40, () => { q.paused = false; }, "#7dff7a", 10);
+      uiButton("GIVE UP THIS QUEST", cx - 110, 344, 220, 34, sqExit, "#ff8a7a", 8);
+    } else {
+      txt("ESC = KEEP GOING", cx, 290, 10, "#7dff7a", "center");
+      txt("X = GIVE UP AND GO BACK TO THE CLIMB", cx, 320, 8, "#ff8a7a", "center");
+    }
+  } else if (!IS_TOUCH && USE_BUTTONS() && q.phase !== "result") {
+    uiButton("II", VIEW_W - 44, 40, 34, 28, () => { q.paused = true; }, "#c8d3ff", 9);
+  }
+}
+
+// =====================================================================
+//  THE PETS MENU (title screen: P)
+// =====================================================================
+let petSel = 0;                                          // 0 = Beatrice, 1-10 = the pets you can free
+const openPets = () => { petSel = 0; state = "pets"; };
+function petsToggle() {
+  const pet = PETS[petSel - 1];
+  if (!pet || !petFreed(pet.id)) return;
+  petSave.chosen = petSave.chosen === pet.id ? null : pet.id;
+  savePets();
+}
+function petsKey(c) {
+  if (c === "ArrowLeft" || c === "KeyA") petSel = (petSel + 10) % 11;
+  else if (c === "ArrowRight" || c === "KeyD") petSel = (petSel + 1) % 11;
+  else if (c === "ArrowUp" || c === "KeyW") petSel = Math.max(0, petSel - 4);
+  else if (c === "ArrowDown" || c === "KeyS") petSel = Math.min(10, petSel + 4);
+  else if (c === "Enter" || c === "Space") petsToggle();
+  else if (c === "Escape" || c === "KeyP") state = "title";
+}
+function drawPets(t) {
+  const cx = VIEW_W / 2;
+  panel(20, 16, VIEW_W - 40, 690);
+  txt("PETS", cx, 28, 18, "#ffd447", "center");
+  txt(`${petSave.freed.length} OF ${PETS.length} FREED   ·   BEATRICE ALWAYS COMES`, cx, 52, 7, "#c8d3ff", "center");
+  for (let k = 0; k < 11; k++) {
+    const col = k % 4, row = Math.floor(k / 4), x = 34 + col * 104, y = 68 + row * 96;
+    const pet = k === 0 ? BEATRICE : PETS[k - 1], free = k === 0 || petFreed(pet.id), sel = k === petSel;
+    ctx.fillStyle = sel ? "rgba(255,212,71,0.16)" : "rgba(255,255,255,0.05)";
+    rr(x, y, 96, 88, 8); ctx.fill();
+    if (sel) { ctx.strokeStyle = "#ffd447"; ctx.lineWidth = 2; ctx.stroke(); }
+    if (k > 0 && petSave.chosen === pet.id) { ctx.strokeStyle = "#7dff7a"; ctx.lineWidth = 3; rr(x + 2, y + 2, 92, 84, 7); ctx.stroke(); }
+    if (free) {
+      if (k === 0) drawDogAt(x + 48, y + 44 + Math.sin(t * 3) * 2, 1, 1.9, t);
+      else drawPet(pet.id, x + 46, y + 62, 1.7, 1, t);
+      txt(pet.name, x + 48, y + 72, 7, pet.color, "center");
+    } else {
+      txt("?", x + 48, y + 26, 22, "rgba(255,255,255,0.3)", "center");
+      txt(`QUEST ${k}`, x + 48, y + 72, 7, "rgba(255,255,255,0.4)", "center");
+    }
+    if (USE_BUTTONS()) uiButton("", x, y, 96, 88, () => { if (petSel === k) petsToggle(); else petSel = k; }, "", 0, false);
+  }
+  // About the selected pet
+  const pet = petSel === 0 ? BEATRICE : PETS[petSel - 1], free = petSel === 0 || petFreed(pet.id), y0 = 368;
+  ctx.fillStyle = "rgba(255,255,255,0.05)"; rr(34, y0, VIEW_W - 68, 270, 10); ctx.fill();
+  if (free) {
+    txt(pet.name, cx, y0 + 12, 14, pet.color, "center");
+    txt(pet.breed, cx, y0 + 34, 7, "#c8d3ff", "center");
+    let y = y0 + 54;
+    for (const l of wrapLines(pet.story, VIEW_W - 100, 7)) { txt(l, cx, y, 7, "#ffffff", "center"); y += 13; }
+    y += 8;
+    txt(`POWER: ${pet.power}`, cx, y, 9, "#ffd447", "center");
+    y += 18;
+    for (const l of wrapLines(pet.desc, VIEW_W - 100, 7)) { txt(l, cx, y, 7, "#7dff7a", "center"); y += 13; }
+    if (petSel > 0) {
+      const on = petSave.chosen === pet.id;
+      if (USE_BUTTONS()) uiButton(on ? "COMING ON YOUR CLIMB!" : "TAKE ON MY CLIMB", cx - 120, y0 + 222, 240, 36, petsToggle, on ? "#7dff7a" : "#ffd447", 9);
+      else txt(on ? "COMING ON YOUR CLIMB!  (ENTER = LEAVE AT HOME)" : "ENTER = TAKE ON MY CLIMB", cx, y0 + 236, 8, on ? "#7dff7a" : "#ffd447", "center");
+    }
+  } else {
+    txt("???", cx, y0 + 20, 16, "rgba(255,255,255,0.5)", "center");
+    txt(`TRAPPED IN SIDE QUEST ${petSel}:`, cx, y0 + 70, 8, "#c8d3ff", "center");
+    txt(SQ_WORLDS[petSel - 1].name, cx, y0 + 90, 10, "#ffd447", "center");
+    txt("FIND A GOLD PORTAL IN THE CLIMB", cx, y0 + 130, 8, "#ffffff", "center");
+    txt("AND BEAT THE BOSS TO FREE THIS PET!", cx, y0 + 148, 8, "#ffffff", "center");
+  }
+  txt("YOU CAN BRING ONE PET ON EACH CLIMB", cx, 650, 7, "#c8d3ff", "center");
+  if (USE_BUTTONS()) uiButton("BACK", cx - 60, 664, 120, 30, () => { state = "title"; }, "#c8d3ff", 9);
+  else txt("ARROWS = LOOK   ENTER = TAKE / LEAVE   ESC = BACK", cx, 674, 7, "#c8d3ff", "center");
+}
+
+// =====================================================================
+//  PET POWERS IN THE CLIMB
+// =====================================================================
+const petPos = { x: 0, y: 0, cd: 0, facing: 1 };
+const PET_FIRST_CD = { molly: 2, cleo: 8, pepper: 1, sprinkles: 25, ember: 2, nova: 12 };
+function petStartRun() {                                 // called after the climb is reset
+  const id = activePet();
+  Object.assign(petPos, { x: player.x, y: player.y, cd: PET_FIRST_CD[id] || 0, facing: 1 });
+  if (id === "biscuit") st.airJumps += 1;
+  if (id === "dusty") st.runSpeed *= 1.2;
+  if (id === "sprinkles") boosts = st.boostMax;
+}
+function updatePet(dt) {
+  const id = activePet();
+  if (!id) return;
+  const p = player, cx = p.x + PLAYER_W / 2, cy = p.y + PLAYER_H / 2;
+  const tx = cx + p.facing * 26, ty = p.y + 6;
+  petPos.x += (tx - petPos.x) * Math.min(1, dt * 5);
+  petPos.y += (ty - petPos.y) * Math.min(1, dt * 5);
+  if (Math.abs(cx - petPos.x) > 4) petPos.facing = cx > petPos.x ? 1 : -1;
+  if (petPos.cd > 0) petPos.cd -= dt;
+  const near = r => enemies.some(e => e.alive && !e.warn && !ENEMY_INFO[e.type].obstacle && Math.hypot(e.x - cx, e.y - cy) < r);
+  if (id === "molly" && petPos.cd <= 0 && near(120)) {
+    petPos.cd = 7;
+    blastAround(cx, cy, 130, 2, 420, "200,200,230");
+    floatText(petPos.x, petPos.y + 40, "WOOF!", "#ffffff");
+  } else if (id === "cleo" && petPos.cd <= 0) {
+    petPos.cd = 25;
+    if (p.fxShield < 3) { p.fxShield++; floatText(petPos.x, petPos.y + 40, "SAND SHIELD!", "#ffd447"); }
+  } else if (id === "pepper" && petPos.cd <= 0) {
+    const tgt = nearestTarget(petPos.x, petPos.y + 14, 300);
+    if (tgt) { petPos.cd = 2; makeShot(petPos.x, petPos.y + 14, Math.atan2(tgt.y - petPos.y - 14, tgt.x - petPos.x), st.damage); }
+  } else if (id === "sprinkles" && petPos.cd <= 0) {
+    petPos.cd = 25;
+    if (boosts < st.boostMax) { boosts++; floatText(petPos.x, petPos.y + 40, "+SUPER JUMP", "#ff8fd0"); }
+  } else if (id === "tundra") {
+    for (const e of enemies) if (e.alive && !e.boss && Math.hypot(e.x - cx, e.y - cy) < 110) e.frozen = Math.max(e.frozen, 0.3);
+  } else if (id === "ember" && petPos.cd <= 0) {
+    const front = enemies.filter(e => e.alive && !e.warn && (e.x - cx) * p.facing > 0 && Math.abs(e.x - cx) < 170 && Math.abs(e.y - cy) < 70);
+    if (front.length) {
+      petPos.cd = 4;
+      for (const e of front) { damageEnemy(e, 2); if (e.alive) { e.burn = 3; e.burnTick = 1; } }
+      puff(cx + p.facing * 60, cy, 18, 160, "255,140,40");
+      floatText(petPos.x, petPos.y + 40, "FIRE!", "#ff7a3a");
+    }
+  } else if (id === "nova" && petPos.cd <= 0) {
+    petPos.cd = 35;
+    p.starTime = 4;
+    p.invuln = Math.max(p.invuln, 4);
+    floatText(petPos.x, petPos.y + 40, "STAR POWER!", "#c39bff");
+  }
+}
+function drawClimbPet(t) {
+  const id = activePet();
+  if (!id) return;
+  const sy = toScreenY(petPos.y) + Math.sin(t * 4) * 2;
+  if (sy < -40 || sy > VIEW_H + 40) return;
+  drawPet(id, petPos.x, sy, 0.9, petPos.facing, t);
+}
+function drawPetHUD() {
+  const id = activePet();
+  if (!id) return;
+  const pet = PETS.find(p => p.id === id), cd = petPos.cd > 0 && PET_FIRST_CD[id] !== undefined ? Math.ceil(petPos.cd) : 0;
+  txt(`${pet.name}: ${pet.power}${cd ? ` ${cd}s` : ""}`, VIEW_W - 26, VIEW_H - 112, 7, cd ? "rgba(255,255,255,0.55)" : pet.color, "right");
+}
+
+// =====================================================================
 //  ON-SCREEN BUTTONS for touch screens (Round 9)
 //  "Hold" buttons act like holding a key; "tap" buttons act like pressing one.
 // =====================================================================
@@ -6778,9 +7855,9 @@ document.querySelectorAll("#pad .pb, #pauseBtn").forEach(bindPadButton);
 // Ability buttons only show up once you have that upgrade.
 let padExtrasKey = "";
 function updatePad() {
-  const show = IS_TOUCH && (state === "playing" || state === "minigame" || state === "explore");
+  const show = IS_TOUCH && (state === "playing" || state === "minigame" || state === "explore" || state === "sidequest");
   pad.classList.toggle("hidden", !show);
-  pauseBtn.classList.toggle("hidden", !(IS_TOUCH && (state === "playing" || state === "explore")));
+  pauseBtn.classList.toggle("hidden", !(IS_TOUCH && (state === "playing" || state === "explore" || state === "sidequest")));
   const goLabel = state === "explore" ? "GO" : "JUMP";             // in the 3D world the big button walks
   if (jumpBtn.textContent !== goLabel) jumpBtn.textContent = goLabel;
   if (!show) return;

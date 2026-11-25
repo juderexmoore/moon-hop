@@ -23,6 +23,11 @@ Works on computers, iPads and iPhones (on-screen buttons appear on touch screens
 **Mouse:** the climber runs toward the mouse. Left click jumps (hold to jump higher), right click shoots,
 middle click casts the dog's spell, and the wheel switches spells. Menus have buttons you can click.
 
+**Side quests and pets:** gold portals in the climb open side-scrolling side quests in 10 worlds, starting with
+a 1700s Scottish castle. Beat the boss at the end to free a caged pet. In the PETS menu (P on the title screen)
+you can read each pet's story and pick one to bring on your climb for its special power. Beatrice, your flying
+Boston terrier, always comes along.
+
 **Arcade mode (A on the title screen):** one life, no checkpoints, and it never ends. Past the Black Hole you
 climb on through Uranus, Neptune, Pluto, the Kuiper Belt and a nebula into the Endless Void. It has its own top 10.
 
