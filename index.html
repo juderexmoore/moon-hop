@@ -1092,6 +1092,7 @@ function onKeyPress(e) {
     if (c === "Space" || c === "Enter") startRun();
     else if (c === "KeyC") openCredits();
     else if (c === "KeyS") openSandbox();
+    else if (c === "Digit3") toggle3D();
   } else if (state === "sandbox") {
     handleSandboxKey(e);
   } else if (state === "editor") {
@@ -1111,6 +1112,7 @@ function onKeyPress(e) {
     else if (c === "KeyV" && player.spells.length > 1) player.spellSel = (player.spellSel + 1) % player.spells.length;
   } else if (state === "paused") {
     if (c === "KeyP" || c === "Escape" || c === "Enter") state = "playing";
+    else if (c === "Digit3") toggle3D();
     else if (mode === "sandbox" && c === "KeyE") openEditor(ed.level);
   } else if (state === "choose") {
     handleChooseKey(e);
@@ -2848,6 +2850,73 @@ function drawRecordLines() {
   }
 }
 
+// ---------- 3D view (Round 12) ----------
+// Still played flat, but drawn with depth: every platform is a solid slab whose top and
+// sides recede toward a vanishing point near the middle of the screen. The point slides a
+// little as you run, so the camera seems to look in at an angle.
+let VIEW3D = (() => { try { return localStorage.getItem("moonhop.view3d") === "1"; } catch (e) { return false; } })();
+function toggle3D() {
+  VIEW3D = !VIEW3D;
+  try { localStorage.setItem("moonhop.view3d", VIEW3D ? "1" : "0"); } catch (e) { /* just for this visit */ }
+}
+const DEPTH = 0.08;                          // how deep the slabs go (bigger = deeper)
+const vp = { x: VIEW_W / 2, y: VIEW_H * 0.38 };
+function updateVanishingPoint() {
+  vp.x = VIEW_W / 2 + (player.x + PLAYER_W / 2 - VIEW_W / 2) * 0.35;
+  vp.y = VIEW_H * 0.38;
+}
+const backPt = (x, y) => [vp.x + (x - vp.x) * (1 - DEPTH), vp.y + (y - vp.y) * (1 - DEPTH)];
+
+function quad(pts, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(...pts[0]);
+  for (const pt of pts.slice(1)) ctx.lineTo(...pt);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// The faces you can see behind a slab's front: its top (or bottom) and the side facing the middle.
+function drawSlab(x, sy, w, h, topRGB, bodyRGB) {
+  const top = sy, bot = sy + h, l = x, r = x + w;
+  if (l > vp.x) quad([[l, top], [l, bot], backPt(l, bot), backPt(l, top)], mixHex(rgbHex(bodyRGB), [0, 0, 0], 0.45));
+  else if (r < vp.x) quad([[r, top], [r, bot], backPt(r, bot), backPt(r, top)], mixHex(rgbHex(bodyRGB), [0, 0, 0], 0.45));
+  if (top > vp.y) quad([[l, top], [r, top], backPt(r, top), backPt(l, top)], mixHex(rgbHex(topRGB), [255, 255, 255], 0.15));
+  else if (bot < vp.y) quad([[l, bot], [r, bot], backPt(r, bot), backPt(l, bot)], mixHex(rgbHex(bodyRGB), [0, 0, 0], 0.6));
+}
+const rgbHex = c => "#" + c.map(v => v.toString(16).padStart(2, "0")).join("");
+
+// A soft shadow on the platform under you, smaller and fainter the higher you are.
+function drawPlayerShadow() {
+  const p = player, cx = p.x + PLAYER_W / 2;
+  let s = p.onGround ? p.standOn : null;
+  if (!s) {
+    for (const c of tower) {
+      if (c.y <= p.y + 1 && p.y - c.y < 400 && cx > c.x && cx < c.x + c.w && solidNow(c) && (!s || c.y > s.y)) s = c;
+    }
+  }
+  if (!s) return;
+  const sy = toScreenY(s.y), k = clamp(1 - (p.y - s.y) / 400, 0.2, 1);
+  const [, by] = backPt(cx, sy);
+  ctx.fillStyle = `rgba(0,0,0,${0.35 * k})`;
+  ctx.beginPath();
+  ctx.ellipse(cx, (sy + by) / 2, 13 * k, Math.max(1.5, Math.abs(by - sy) / 2) * k + 1, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawDepthHaze() {                   // pushes the background back
+  ctx.fillStyle = "rgba(10,12,30,0.22)";
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+}
+
+function drawVignette() {                    // darker edges, like a camera lens
+  const g = ctx.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.35, VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.75);
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(1, "rgba(0,0,0,0.45)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+}
+
 function drawGround(sy) {                                    // the sandy sea floor
   ctx.fillStyle = "#b89a62";
   ctx.fillRect(0, sy, VIEW_W, VIEW_H - sy + 2);
@@ -2857,6 +2926,9 @@ function drawGround(sy) {                                    // the sandy sea fl
   ctx.fillRect(0, sy + 10, VIEW_W, 3);
   ctx.fillStyle = "#f0e0b0";                                 // a few shells
   for (const x of [40, 170, 300, 420]) { ctx.beginPath(); ctx.arc(x, sy + 22, 4, Math.PI, 0); ctx.fill(); }
+  if (VIEW3D && sy > vp.y) {                                 // 3D: the sea floor stretches back
+    quad([[0, sy], [VIEW_W, sy], backPt(VIEW_W, sy), backPt(0, sy)], "#d9c288");
+  }
 }
 
 function drawSign(s, sy) {
@@ -2951,6 +3023,7 @@ function drawPlatform(s, time) {
       ctx.fill();
     }
   }
+  if (VIEW3D) drawSlab(s.x, sy, s.w, 14, gradientAt(PLAT_TOP, t), gradientAt(PLAT_BODY, t));   // 3D sides and top
   ctx.fillStyle = rgb(gradientAt(PLAT_BODY, t));
   rr(s.x, sy, s.w, 14, 5);
   ctx.fill();
@@ -3977,13 +4050,14 @@ function drawTitle(t) {
   drawBoard(cx, 292, -1, t);
   if (IS_TOUCH) {
     uiButton("TAP TO PLAY", cx - 110, 498, 220, 36, startRun, "#ffffff", 12);
-    uiButton("SANDBOX", cx - 150, 540, 140, 28, openSandbox, "#7dff7a", 8);
-    uiButton("CREDITS", cx + 10, 540, 140, 28, openCredits, "#c8d3ff", 8);
+    uiButton("SANDBOX", cx - 156, 540, 100, 28, openSandbox, "#7dff7a", 8);
+    uiButton(VIEW3D ? "3D: ON" : "3D: OFF", cx - 50, 540, 100, 28, toggle3D, "#ffd447", 8);
+    uiButton("CREDITS", cx + 56, 540, 100, 28, openCredits, "#c8d3ff", 8);
     ctx.save();
     ctx.translate(0, 18);                    // the save notice goes below the buttons
   } else {
     if (Math.floor(t * 2.2) % 2 === 0) txt("PRESS SPACE TO START", cx, 506, 13, "#ffffff", "center");
-    txt("S = SANDBOX     C = CREDITS", cx, 534, 8, "#c8d3ff", "center");
+    txt(`S = SANDBOX   3 = 3D VIEW: ${VIEW3D ? "ON" : "OFF"}   C = CREDITS`, cx, 534, 7, "#c8d3ff", "center");
   }
   drawSaveNotice(cx);
   if (IS_TOUCH) ctx.restore();
@@ -4038,10 +4112,12 @@ function drawPaused() {
   txt("PAUSED", cx, 150, 24, "#ffffff", "center");
   if (IS_TOUCH) {
     uiButton("KEEP CLIMBING", cx - 120, 560, 240, 40, () => { state = "playing"; }, "#7dff7a", 11);
+    uiButton(VIEW3D ? "3D VIEW: ON" : "3D VIEW: OFF", cx - 120, 508, 240, 34, toggle3D, "#ffd447", 9);
     if (mode === "sandbox") uiButton("BACK TO BUILDING", cx - 120, 612, 240, 34, () => openEditor(ed.level), "#ffd447", 9);
     else uiButton("QUIT TO TITLE", cx - 120, 612, 240, 34, showTitle, "#c8d3ff", 9);
   } else {
     txt("P or ESC to keep climbing", cx, 192, 9, "#c8d3ff", "center");
+    txt(`3 = 3D VIEW: ${VIEW3D ? "ON" : "OFF"}`, cx, 600, 9, "#ffd447", "center");
     if (mode === "sandbox") txt("E = BACK TO BUILDING", cx, 212, 9, "#7dff7a", "center");
   }
   if (taken.length) {
@@ -4411,8 +4487,10 @@ function render(t) {
   drawSky();
   drawStars(t);
   drawBackdrop(t);
+  updateVanishingPoint();
   drawMoon(t);
   drawClouds(t);
+  if (VIEW3D) drawDepthHaze();
   const main = mode === "main";
   if (main) {
     drawEdgeGlow(DANGER_Y, "255,80,80");
@@ -4430,10 +4508,12 @@ function render(t) {
   drawPetals();
   drawShots();
   drawEffects();
+  if (VIEW3D) drawPlayerShadow();
   drawDog(t);
   drawPlayer(t);
   drawSpellCloud(t);
   drawWeather(t);
+  if (VIEW3D) drawVignette();
   drawConfetti();
   if (timeSlow > 0) {
     ctx.fillStyle = "rgba(80,140,255,0.12)";
